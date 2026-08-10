@@ -16,6 +16,10 @@ sandbox/**/.ipynb_checkpoints/
 sandbox/**/*.pt
 sandbox/**/*.ckpt
 
+# JANUS_SANDBOX_ROOT (.env) puede apuntar dentro del repo en máquinas
+# donde no hay HDD separado — se ignora por las dudas.
+/sandbox_outputs/
+
 # ── Generadores de configs (privados, no van al repo público) ─
 # Descomentar antes de publicar el repo del paper:
 # projects/*/generators/
@@ -33,3 +37,4 @@ __pycache__/
 
 # ── matplotlib cache ──────────────────────────────────────────
 config/matplotlib_cache/
+mlflow/mlflow.db
