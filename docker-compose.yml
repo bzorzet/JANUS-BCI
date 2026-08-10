@@ -1,0 +1,61 @@
+services:
+
+  mlflow:
+    build:
+      context: .
+      args:
+        USE_GPU: "false"
+    image: janus-bci:mlflow
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /workspace/mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/workspace
+    env_file:
+      - .env
+
+  bci-gpu:
+    profiles: [gpu]
+    build:
+      context: .
+      args:
+        USE_GPU: "true"
+    image: janus-bci:gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - .:/workspace
+      - ${JANUS_DATA_ROOT}:/data:ro
+      - ${JANUS_RESULTS_ROOT}:/results
+      - ${JANUS_SANDBOX_ROOT}:/sandbox
+    env_file:
+      - .env
+    stdin_open: true
+    tty: true
+
+  bci-cpu:
+    profiles: [cpu]
+    build:
+      context: .
+      args:
+        USE_GPU: "false"
+    image: janus-bci:cpu
+    volumes:
+      - .:/workspace
+      - ${JANUS_DATA_ROOT}:/data:ro
+      - ${JANUS_RESULTS_ROOT}:/results
+      - ${JANUS_SANDBOX_ROOT}:/sandbox
+    env_file:
+      - .env
+    stdin_open: true
+    tty: true

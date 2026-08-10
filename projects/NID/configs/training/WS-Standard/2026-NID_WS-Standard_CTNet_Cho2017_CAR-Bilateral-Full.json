@@ -1,0 +1,75 @@
+{
+    "script_type": "train_dl",
+    "project_config": {
+        "project_name": "2026-NID",
+        "strategy_name": "WS-Standard",
+        "model_to_train": "CTNet",
+        "database_name": "Cho2017",
+        "database_session": "session_1",
+        "label": "CAR-Bilateral-Full"
+    },
+    "description": "Preprocessing using CAR reference. Within-subject standard split.",
+    "databases": {
+        "class_name": "PreprocessedDataset",
+        "module_name": "src.eeg_datasets",
+        "params": {
+            "preprocessing_name": "2026-NID_Cho2017_s1_CAR-preproc",
+            "db_name": "Cho2017",
+            "sessions": ["session_1"],
+            "subjects": null,
+            "data_to_load": ["motor_imagery"],
+            "channels": [
+                "FT7", "FC5", "FC3", "FC1", "FCz", "FC2", "FC4", "FC6", "FT8",
+                "T7",  "C5",  "C3",  "C1",  "Cz",  "C2",  "C4",  "C6",  "T8",
+                "TP7", "CP5", "CP3", "CP1", "CPz", "CP2", "CP4", "CP6", "TP8"
+            ],
+            "classes_to_return": null
+        }
+    },
+    "general_script_config": {
+        "subjects_to_test": null,
+        "max_epochs": 500,
+        "model_init_seed": [399, 8, 157, 9, 125, 85, 100, 200, 300, 400],
+        "ptrain": 0.6,
+        "pval": 0.2,
+        "ptest": 0.2,
+        "device": "cuda",
+        "seed": 8,
+        "sets_seeds": null
+    },
+    "torch_dataset": {
+        "class_name": "MIBCI_SimpleDataset",
+        "module_name": "src.torch_utils",
+        "params": {"X": null, "y": null, "classification": true}
+    },
+    "torch_dataloader": {
+        "train": {"class_name": "DataLoader", "module_name": "torch.utils.data", "params": {"batch_size": 64, "shuffle": true}},
+        "val":   {"class_name": "DataLoader", "module_name": "torch.utils.data", "params": {"batch_size": 40, "shuffle": false}},
+        "test":  {"class_name": "DataLoader", "module_name": "torch.utils.data", "params": {"batch_size": 40, "shuffle": false}}
+    },
+    "model": {
+        "class_name": "CTNet",
+        "module_name": "src.networks",
+        "params": {
+            "n_chans": 27, "n_outputs": 2, "sfreq": 128, "n_times": 256,
+            "drop_prob_cnn": 0.3, "drop_prob_posi": 0.1, "drop_prob_final": 0.5,
+            "heads": 4, "emb_size": 16, "depth": 6, "n_filters_time": 8,
+            "kernel_size": 32, "depth_multiplier": 2, "pool_size_1": 4, "pool_size_2": 3
+        }
+    },
+    "optimizer": {
+        "class_name": "Adam",
+        "module_name": "torch.optim",
+        "params": {"lr": 5e-05, "betas": [0.9, 0.999], "eps": 1e-08, "weight_decay": 0.001}
+    },
+    "criterion": {
+        "class_name": "CrossEntropyLoss",
+        "module_name": "torch.nn",
+        "params": {}
+    },
+    "callbacks": [
+        {"class_name": "LoggerCallback",   "module_name": "src.torch_utils", "params": {}},
+        {"class_name": "EarlyStopping",    "module_name": "src.torch_utils", "params": {"patience": 150, "monitor": "val_loss", "lower_is_better": true, "threshold": 0.001, "load_best": true}},
+        {"class_name": "CustomCheckpoint", "module_name": "src.torch_utils", "params": {"dirname": null, "save_each_n_epochs": 100, "save_best": true}}
+    ]
+}

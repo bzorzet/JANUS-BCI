@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//data/**)",
+      "Read(//data/EEG_DATABASES/**)",
+      "Bash(grep -viE \"^\\\\.$|^\\\\.\\\\.$\")",
+      "Bash(docker --version)",
+      "Bash(docker compose *)"
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "JANUS-BCI",
+
+  // Usa el servicio bci-gpu de docker-compose.yml. La GPU se
+  // habilita en ESE archivo (deploy.resources.reservations.devices),
+  // no acá — "runArgs" se ignora por completo cuando se usa
+  // dockerComposeFile (confirmado en la doc oficial de Dev
+  // Containers, ver BUGS.md).
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "bci-gpu",
+  "workspaceFolder": "/workspace",
+  "runServices": ["bci-gpu"],
+
+  // Mantiene el contenedor vivo — sin esto, Dev Containers no tiene
+  // qué "attachear" porque el servicio no tiene un proceso long-running.
+  "overrideCommand": true,
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "ms-toolsai.jupyter-keymap",
+        "ms-python.debugpy",
+        "ms-python.pylint"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/conda/envs/janus-bci/bin/python",
+        "jupyter.notebookFileRoot": "/workspace"
+      }
+    }
+  },
+
+  // Corre el verify apenas se crea el contenedor — feedback inmediato
+  // de que el entorno quedó bien antes de empezar a programar.
+  "postCreateCommand": "python scripts/verify_env.py || true",
+
+  "forwardPorts": [8888, 5000]
+}
