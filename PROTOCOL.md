@@ -58,7 +58,7 @@ janus-bci/
 ├── src/                        # código reutilizable entre proyectos
 │   ├── utils/
 │   │   └── paths.py            # objeto PATHS — único acceso a rutas
-│   ├── networks/               # arquitecturas DL (CTNet, EEGNet...)
+│   ├── models/                 # arquitecturas DL (CTNet, EEGNet...)
 │   ├── eeg_datasets/           # clases de carga de datos
 │   ├── torch_utils/            # DataLoader, callbacks, EarlyStopping
 │   ├── training/               # loop de entrenamiento genérico
