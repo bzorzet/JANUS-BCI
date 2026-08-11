@@ -1,3 +1,5 @@
+import logging
+import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +10,12 @@ from scipy.io import loadmat
 from src.utils.paths import PATHS
 from .base import BaseEEGDataset
 from .subject import Subject
+
+logger = logging.getLogger(__name__)
+
+# Wasabi S3 mirror used by GigaDB for this dataset (DOI 10.5524/100295).
+GIGA_URL = "https://s3.ap-northeast-1.wasabisys.com/gigadb-datasets/live/pub/10.5524/100001_101000/100295/mat_data/"
+
 
 class Cho2017(BaseEEGDataset):
     """
@@ -113,11 +121,41 @@ class Cho2017(BaseEEGDataset):
         return subjects_metadata
 
     def download(self):
-        raise NotImplementedError(
-            "TODO: descarga de GigaDB (DOI 10.5524/100295) — pendiente de confirmar "
-            f"fuente/mirror. Verificá que los datos ya estén en {self.dataset_path} "
-            "o descargalos manualmente (ver https://doi.org/10.5524/100295)."
-        )
+        """Download the per-subject .mat files from the GigaDB Wasabi
+        mirror (DOI 10.5524/100295), skipping files already present on
+        disk. database_information.csv is a hand-curated file and is
+        never downloaded here -- only checked for, with a warning if
+        missing, since download() must not fail because of it."""
+        dest_dir = Path(self.dataset_path)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        for subject_id in self.subject_list:
+            filename = f"s{subject_id:02d}.mat"
+            dest_path = dest_dir / filename
+            if dest_path.exists() and dest_path.stat().st_size > 1024:
+                logger.info("Skipping subject %d: %s already exists", subject_id, filename)
+                continue
+
+            url = GIGA_URL + filename
+            logger.info("Downloading subject %d from %s", subject_id, url)
+            try:
+                urllib.request.urlretrieve(url, dest_path)
+            except KeyboardInterrupt:
+                if dest_path.exists():
+                    dest_path.unlink()
+                raise
+            except Exception as e:
+                logger.error("Failed to download %s: %s", filename, e)
+                if dest_path.exists():
+                    dest_path.unlink()
+
+        metadata_path = dest_dir.parent / "database_information.csv"
+        if not metadata_path.exists():
+            logger.warning(
+                "database_information.csv not found at %s -- this file is a hand "
+                "curation, not downloaded automatically. Copy it there manually.",
+                metadata_path,
+            )
 
     def get_subject(self, subject_id: int, session: str = "session_1") -> Subject:
         file_path = str(Path(self.dataset_path) / f's{subject_id:02d}.mat')

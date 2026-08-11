@@ -21,13 +21,14 @@ def extract_data_from_epochs(epochs, **kwargs):
     Returns
     -------
     dict
-        {'data': np.array, 'labels': np.array, 'ch_names': list, 'sfreq': float}
+        {'data': np.array, 'labels': np.array, 'ch_names': list, 'sfreq': float, 'tmin': float}
     """
     result = {
         "sfreq": epochs.info["sfreq"],
         "ch_names": epochs.ch_names,
         "data": epochs.get_data(**kwargs),
         "event_id": epochs.event_id,
+        "tmin": epochs.tmin,
     }
     if epochs.events is not None:
         result["labels"] = epochs.events[:, -1]

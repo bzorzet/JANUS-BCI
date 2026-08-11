@@ -35,6 +35,7 @@ _STATUS_STYLE = {
     "corriendo": ("yellow", "⏳"),
     "success": ("green", "✓"),
     "failed": ("red", "✗"),
+    "omitido": ("cyan", "⏭"),
 }
 
 
@@ -54,6 +55,7 @@ class RichProgressReporter(ProgressReporter):
         self._task_id = None
         self._rows: Dict[str, Dict[str, str]] = {}
         self._runs_known = 0
+        self._last_refresh = 0.0
 
     def _build_table(self):
         from rich.table import Table
@@ -71,9 +73,21 @@ class RichProgressReporter(ProgressReporter):
             )
         return table
 
-    def _refresh(self) -> None:
+    def _refresh(self, force: bool = False) -> None:
+        import time
+
         from rich.console import Group
 
+        # Reconstruir la tabla es O(filas conocidas) — en un resume grande
+        # (miles de "omitido" seguidos, sin trabajo real entre medio) llamar
+        # esto en cada evento sería O(n²). Se throttlea por tiempo (no por
+        # cantidad de eventos) para no demorar el feedback de un run real,
+        # que sí tarda; el estado interno (self._rows) igual queda al día
+        # en cada evento, solo se pospone el redibujado.
+        now = time.monotonic()
+        if not force and (now - self._last_refresh) < 0.25:
+            return
+        self._last_refresh = now
         if self._live is not None:
             self._live.update(Group(self._progress, self._build_table()))
 

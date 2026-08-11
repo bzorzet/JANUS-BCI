@@ -34,7 +34,13 @@ def make_run_dir(strategy: str, recipe: str, dataset: str, partition: str, repli
     return run_dir
 
 
-def run_preprocessing(config: dict, docker_image: Optional[str], reporter: ProgressReporter) -> None:
+def run_preprocessing(
+    config: dict,
+    docker_image: Optional[str],
+    reporter: ProgressReporter,
+    force: bool = False,
+    overwrite_existing: bool = False,
+) -> None:
     """script_type == 'preprocessing'. El trío de reproducibilidad y el
     manifest los escribe el propio EEGDatabasePreprocessor.run()."""
     db_config = config["database"]
@@ -42,12 +48,19 @@ def run_preprocessing(config: dict, docker_image: Optional[str], reporter: Progr
     dataset = dataset_cls(**db_config["kwargs"])
 
     orchestrator = EEGDatabasePreprocessor(
-        dataset, config["preprocessing_name"], config, docker_image=docker_image, reporter=reporter
+        dataset, config["preprocessing_name"], config, docker_image=docker_image, reporter=reporter,
+        force=force, overwrite_existing=overwrite_existing,
     )
     orchestrator.run()
 
 
-def run_training(config: dict, docker_image: Optional[str], reporter: ProgressReporter) -> None:
+def run_training(
+    config: dict,
+    docker_image: Optional[str],
+    reporter: ProgressReporter,
+    force: bool = False,
+    overwrite_existing: bool = False,
+) -> None:
     """script_type == 'train_dl' / 'train_ml'. TODO (ver CLAUDE.md 'Estado
     del proyecto'): iterar sobre context.partitions definidas en config,
     llamar a la lógica real de src/training o src/analysis por cada una,
@@ -74,10 +87,16 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Path to json config file",
-                        default="temp/Cho2017_s1_CAR-preproc.json")
+                        default="/home/bzorzet/JANUS-BCI/preprocessing/configs/Cho2017/Cho2017_s1_simple-CAR-128Hz-preproc.json")
     parser.add_argument("--docker-image", default=None)
     parser.add_argument("--progress", choices=["none", "rich"], default="rich",
                         help="Progreso en terminal: 'rich' para tabla+barra en vivo (debug interactivo), 'none' headless.")
+    parser.add_argument("--force", action="store_true",
+                        help="Ignora run_registry.csv y reprocesa todo, incluso lo ya marcado success.")
+    parser.add_argument("--overwrite-existing", action="store_true",
+                        help="Si el preprocessing_pipeline guardado difiere del actual, sobrescribe "
+                             "config.json/.git_commit/.docker_image y reinicia run_registry.csv, "
+                             "stage_metrics.csv y las detail tables en vez de rechazar.")
     args = parser.parse_args()
 
     config = json.loads(Path(args.config).read_text())
@@ -91,7 +110,7 @@ def main():
             "obligatorio explícito en todo config (PROTOCOL.md sección 5)."
         )
     reporter = RichProgressReporter() if args.progress == "rich" else ProgressReporter()
-    handler(config, args.docker_image, reporter)
+    handler(config, args.docker_image, reporter, force=args.force, overwrite_existing=args.overwrite_existing)
 
 
 if __name__ == "__main__":

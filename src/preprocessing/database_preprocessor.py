@@ -7,9 +7,11 @@ saver (`register_artifact_saver`), no subclaseando este orquestador.
 """
 import csv
 import datetime
+import json
 import logging
+import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import mne
 import numpy as np
@@ -80,6 +82,49 @@ def _now() -> str:
     return datetime.datetime.now().isoformat()
 
 
+def _diff_values(old: Any, new: Any, path: str) -> List[str]:
+    """Diff recursivo genérico, para armar el mensaje de 'qué claves
+    cambiaron' cuando el pipeline guardado no coincide con el nuevo."""
+    diffs: List[str] = []
+    if isinstance(old, dict) and isinstance(new, dict):
+        for key in sorted(set(old) | set(new)):
+            if key not in old:
+                diffs.append(f"{path}.{key}: agregado ({new[key]!r})")
+            elif key not in new:
+                diffs.append(f"{path}.{key}: eliminado (era {old[key]!r})")
+            elif old[key] != new[key]:
+                diffs.extend(_diff_values(old[key], new[key], f"{path}.{key}"))
+    elif old != new:
+        diffs.append(f"{path}: {old!r} -> {new!r}")
+    return diffs
+
+
+def _diff_pipeline(old_pipeline: Optional[dict], new_pipeline: Optional[dict]) -> List[str]:
+    """Compara dos `preprocessing_pipeline` (formato {'stages': [...]})
+    stage por stage, identificando cada uno por `stage_name` para que el
+    mensaje de error sea legible en vez de mostrar índices de lista."""
+    old_stages = {
+        s.get("stage_name", f"#{i}"): s
+        for i, s in enumerate((old_pipeline or {}).get("stages", []))
+    }
+    new_stages = {
+        s.get("stage_name", f"#{i}"): s
+        for i, s in enumerate((new_pipeline or {}).get("stages", []))
+    }
+
+    diffs: List[str] = []
+    for name in old_stages:
+        if name not in new_stages:
+            diffs.append(f"stage '{name}' eliminado")
+    for name in new_stages:
+        if name not in old_stages:
+            diffs.append(f"stage '{name}' agregado")
+    for name in old_stages:
+        if name in new_stages and old_stages[name] != new_stages[name]:
+            diffs.extend(_diff_values(old_stages[name], new_stages[name], f"stage '{name}'"))
+    return diffs
+
+
 class EEGDatabasePreprocessor:
     def __init__(
         self,
@@ -88,21 +133,39 @@ class EEGDatabasePreprocessor:
         config: dict,
         docker_image: Optional[str] = None,
         reporter: Optional[ProgressReporter] = None,
+        force: bool = False,
+        overwrite_existing: bool = False,
     ):
         self.dataset = dataset
         self.preprocessing_name = preprocessing_name
         self.config = config
         self.docker_image = docker_image
         self.reporter = reporter or ProgressReporter()
+        self.force = force
+        self.overwrite_existing = overwrite_existing
         self.output_path = PATHS.preprocessed_root / preprocessing_name / dataset.code
         self.output_path.mkdir(parents=True, exist_ok=True)
         self.worker = EEGPreprocessor(stages=config["preprocessing_pipeline"]["stages"])
         self._artifact_savers: Dict[str, Callable] = dict(ARTIFACT_SAVERS)
+        self._done_partitions: set = set()
+        self._metadata_enriched = False
 
     def register_artifact_saver(self, key: str, fn: Callable) -> None:
         self._artifact_savers[key] = fn
 
     def run(self) -> None:
+        # Silencia el logging interno de MNE/mne_icalabel independientemente
+        # de los `verbose` de cada config individual — una sola vez, acá,
+        # porque este es el entrypoint real de un barrido (sandbox u otro
+        # caller que use el orquestador directo lo hereda también).
+        mne.set_log_level("WARNING")
+
+        # Antes de tocar nada en disco: si ya hay una corrida previa con un
+        # preprocessing_pipeline distinto para este preprocessing_name, no
+        # seguimos en silencio (o pedimos --overwrite-existing, o
+        # preguntamos por TTY, o rechazamos).
+        self._check_config_compatibility()
+
         # Trío de reproducibilidad + manifest, una sola vez, antes del loop
         # (DESIGN.md sección 4 punto 5).
         log_reproducibility_trio(self.output_path, self.config, self.docker_image)
@@ -110,6 +173,13 @@ class EEGDatabasePreprocessor:
 
         subjects_list = self.dataset.get_subjects_list()
         sessions = getattr(self.dataset, "sessions", ["session_1"])
+        self._done_partitions = set() if self.force else self._load_done_partitions()
+        if self._done_partitions:
+            logger.info(
+                "Retomando barrido: %d combinaciones ya resueltas se van a omitir "
+                "(--force para ignorar el registro y reprocesar todo).",
+                len(self._done_partitions),
+            )
         logger.info("Starting preprocessing for %d subjects...", len(subjects_list))
         self.reporter.on_start(len(subjects_list) * len(sessions))
 
@@ -137,6 +207,12 @@ class EEGDatabasePreprocessor:
                 if subject_obj is None:
                     continue
                 for context, run_id, raw_data in subject_obj.iter_all_runs():
+                    partition = f"subject_{subject:02d}/{context}/{run_id}"
+                    if partition in self._done_partitions:
+                        logger.info("Omitiendo %s (ya resuelto en run_registry.csv)", partition)
+                        self.reporter.on_run_start(partition)
+                        self.reporter.on_run_result(partition, "omitido")
+                        continue
                     self._process_one_run(subject, session, context, run_id, raw_data)
 
         logger.info("--- Preprocessing Finished ---")
@@ -152,6 +228,13 @@ class EEGDatabasePreprocessor:
         try:
             logger.info("Processing %s", partition)
             result = self.worker.process(raw_data)
+            if not self._metadata_enriched:
+                # Only the first successful run is needed: every run goes
+                # through the same stage pipeline, so the final data type
+                # (and therefore which fields are readable) is the same
+                # for the whole sweep.
+                self._enrich_dataset_description(result.data)
+                self._metadata_enriched = True
             data_dir = self.output_path / session / f"subject_{subject:02d}"
             output_path = _save_processed_data(result.data, data_dir, prefix)
             self._save_artifacts(result, subject, prefix)
@@ -203,6 +286,79 @@ class EEGDatabasePreprocessor:
                     logger.warning(
                         "saver de artifact '%s' del stage '%s' falló: %s", key, stage_name, e,
                     )
+
+    def _load_done_partitions(self) -> set:
+        """Partitions con status == 'success' en run_registry.csv que
+        además tienen su archivo de salida presente en disco — se saltean
+        en este barrido. Si una partition aparece más de una vez (barridos
+        --force previos), se toma la fila más reciente."""
+        registry_path = self.output_path / "run_registry.csv"
+        if not registry_path.exists():
+            return set()
+        registry = pd.read_csv(registry_path)
+        if registry.empty:
+            return set()
+        latest = registry.drop_duplicates(subset="partition", keep="last")
+        done = set()
+        for _, row in latest.iterrows():
+            if row.get("status") != "success":
+                continue
+            output_path = row.get("output_path")
+            if pd.isna(output_path) or not output_path:
+                continue
+            if Path(str(output_path)).exists():
+                done.add(row["partition"])
+        return done
+
+    def _check_config_compatibility(self) -> None:
+        """DESIGN.md no define esto — regla nueva: preprocessing_name
+        identifica una receta (sección 2), así que si config.json ya
+        existe acá con un preprocessing_pipeline distinto, no seguimos en
+        silencio (mezclaría resultados de dos recetas bajo el mismo
+        nombre)."""
+        config_path = self.output_path / "config.json"
+        if not config_path.exists():
+            return
+
+        existing_config = json.loads(config_path.read_text())
+        existing_pipeline = existing_config.get("preprocessing_pipeline")
+        new_pipeline = self.config.get("preprocessing_pipeline")
+        if existing_pipeline == new_pipeline:
+            return
+
+        diffs = _diff_pipeline(existing_pipeline, new_pipeline)
+        message = (
+            f"El config.json existente en {self.output_path} tiene un "
+            f"preprocessing_pipeline distinto al de este config para "
+            f"preprocessing_name='{self.preprocessing_name}':\n"
+            + "\n".join(f"  - {d}" for d in diffs)
+            + "\nUsá un preprocessing_name distinto para un pipeline nuevo, "
+            "o --overwrite-existing si estás seguro de reemplazar la corrida anterior."
+        )
+
+        if self.overwrite_existing:
+            logger.warning("Pipeline distinto detectado — sobrescribiendo por --overwrite-existing.")
+            self._reset_output_for_overwrite()
+            return
+
+        if sys.stdin.isatty():
+            answer = input(f"{message}\n¿Sobrescribir de todas formas? [y/N]: ").strip().lower()
+            if answer == "y":
+                self._reset_output_for_overwrite()
+                return
+            raise RuntimeError(f"Corrida cancelada por el usuario.\n{message}")
+
+        # Sin TTY (batch/cron): nunca bloquear esperando input, rechazar duro.
+        raise RuntimeError(message)
+
+    def _reset_output_for_overwrite(self) -> None:
+        """--overwrite-existing: config.json/.git_commit/.docker_image se
+        sobrescriben solos más abajo (log_reproducibility_trio corre
+        siempre); acá limpiamos lo que si no quedaría mezclado con la
+        corrida anterior — run_registry.csv, stage_metrics.csv y las
+        detail tables por stage."""
+        for path in self.output_path.glob("*.csv"):
+            path.unlink()
 
     def _build_summary(self) -> Dict[str, Any]:
         # Se lee de vuelta run_registry.csv/stage_metrics.csv en vez de
@@ -281,4 +437,38 @@ class EEGDatabasePreprocessor:
                 sub_id = row.get("subject_id", row.get("id", row.get("Subject")))
                 if sub_id is not None:
                     info["subjects_individual_metadata"][int(sub_id)] = row.to_dict()
+        save_dict_as_json(str(self.output_path), info, "dataset_description.json")
+
+    @staticmethod
+    def _extract_epoch_metadata(data: Any) -> Dict[str, Any]:
+        """Read sfreq/n_times/tmin from an actual processed result, never
+        declared or computed from config. Returns an empty dict (no field
+        added, no default guessed) unless `data` is an mne.Epochs or the
+        dict produced by extract_data_from_epochs -- e.g. plain Raw (no
+        epoching stage) yields {}."""
+        if isinstance(data, mne.BaseEpochs):
+            return {"sfreq": data.info["sfreq"], "n_times": len(data.times), "tmin": data.tmin}
+        if isinstance(data, dict) and isinstance(data.get("data"), np.ndarray):
+            metadata: Dict[str, Any] = {"n_times": data["data"].shape[-1]}
+            if "sfreq" in data:
+                metadata["sfreq"] = data["sfreq"]
+            if "tmin" in data:
+                metadata["tmin"] = data["tmin"]
+            if "tmax" in data:
+                metadata["tmax"] = data["tmax"]
+            return metadata
+        return {}
+
+    def _enrich_dataset_description(self, data: Any) -> None:
+        """Patch dataset_description.json with sfreq/n_times/tmin read
+        from the first successful run's real result, once, overriding the
+        declared-upfront sfreq with the real one. No-op if `data` isn't
+        Epochs-shaped (Raw-only pipelines keep the declared sfreq and
+        never get n_times/tmin)."""
+        metadata = self._extract_epoch_metadata(data)
+        if not metadata:
+            return
+        description_path = self.output_path / "dataset_description.json"
+        info = json.loads(description_path.read_text())
+        info.update(metadata)
         save_dict_as_json(str(self.output_path), info, "dataset_description.json")

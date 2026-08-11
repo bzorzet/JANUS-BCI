@@ -60,7 +60,10 @@ def handle_epoching(data, stage: dict) -> StageResult:
         raise ValueError("No events found in data. Cannot epoch.")
     config["events"] = events
     epochs = mne.Epochs(data, **config)
-    return StageResult(data=epochs)
+    # Logged per run as a cross-check against the sfreq written to
+    # dataset_description.json (which is read from the first real result,
+    # not declared upfront -- see EEGDatabasePreprocessor._enrich_dataset_description).
+    return StageResult(data=epochs, metrics={"sfreq": epochs.info["sfreq"]})
 
 
 def handle_ica(data, stage: dict) -> StageResult:

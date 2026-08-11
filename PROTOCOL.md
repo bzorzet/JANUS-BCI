@@ -186,7 +186,39 @@ nombre de archivo. Ver `preprocessing/DESIGN.md` sección 5.
 
 ---
 
-## 7. Base de datos analítica
+## 7. Reanudación y sobrescritura (todos los script_type)
+
+Todo script de producción que recorre un barrido con `script_progress.csv`
+sigue las mismas reglas de reanudación y sobrescritura, sin importar
+`script_type`. La identidad de una corrida la define su `config.json`
+(sección 9, trío de reproducibilidad) en el path de salida.
+
+**Comportamiento por default (sin flags):**
+- Sin corrida previa en ese path → arranca normal.
+- Corrida previa con el **mismo** config → reanuda: salta las
+  particiones con `status == success` (y su archivo de salida presente
+  en disco), procesa el resto.
+- Corrida previa con config **distinto** → rechaza, indicando qué
+  cambió, y sugiere cambiar la identidad (`preprocessing_name` /
+  `recipe_name` / `label`, según `script_type`) en vez de sobrescribir.
+
+**Flags:**
+- `--force` — ignora `status` en `script_progress.csv`, reprocesa todas
+  las particiones igual; la identidad (config) no cambió.
+- `--overwrite-existing` — para el caso de config distinto: sobrescribe
+  el trío completo y **reinicia** `script_progress.csv` y cualquier CSV
+  de métricas asociado antes de correr. Nunca se mezclan corridas de
+  identidades distintas en el mismo path de salida.
+- Sin flags, con TTY interactiva, un config distinto pregunta
+  confirmación antes de rechazar. Sin TTY (batch/cron) nunca bloquea:
+  rechaza directo pidiendo el flag correspondiente.
+
+**Implementación:** un solo componente compartido (no reimplementado
+por cada orquestador de `script_type`) — ver `src/utils/`.
+
+---
+
+## 8. Base de datos analítica
 
 - 100% reconstruible: `build_analytics_db.py` borra y repuebla
   desde los CSVs en disco. Nunca se edita a mano.
@@ -195,7 +227,7 @@ nombre de archivo. Ver `preprocessing/DESIGN.md` sección 5.
 
 ---
 
-## 8. Reproducibilidad radical
+## 9. Reproducibilidad radical
 
 Cada corrida deja en su carpeta hoja el trío:
 1. `config.json` — snapshot exacto del JSON usado
@@ -206,7 +238,7 @@ Sin estos tres datos, un resultado no se considera trazable.
 
 ---
 
-## 9. Flujo de sincronización con servidores
+## 1. Flujo de sincronización con servidores
 
 ```
 fetch_from_server.sh  →  push_to_mlflow.py  →  build_analytics_db.py
@@ -218,7 +250,7 @@ Siempre en ese orden, nunca salteado.
 
 ---
 
-## 10. Generadores de configs (privados)
+## 11. Generadores de configs (privados)
 
 Cada proyecto tiene su `generators/` con el script que produce
 los JSONs automáticamente combinando datasets × modelos ×
@@ -229,7 +261,7 @@ preprocesamiento. Esta carpeta:
 
 ---
 
-## 11. Checklist antes de arrancar un proyecto nuevo
+## 12. Checklist antes de arrancar un proyecto nuevo
 
 1. ¿Definiste `project_name` y las `strategy_name` que vas a usar?
 2. ¿El preprocesamiento tiene nombre versionado
@@ -242,8 +274,7 @@ preprocesamiento. Esta carpeta:
 
 ---
 
-
-## 12. Ítems abiertos
+## 13. Ítems abiertos
 
 - **`hypersearch`** como `script_type` futuro — se define cuando
   haya un caso real de búsqueda de hiperparámetros.

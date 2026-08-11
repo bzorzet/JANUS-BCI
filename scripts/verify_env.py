@@ -70,12 +70,6 @@ def check_pyriemann():
     return f"pyriemann {pyriemann.__version__}"
 check("pyriemann", check_pyriemann)
 
-# Braindecode
-def check_braindecode():
-    import braindecode
-    return f"braindecode {braindecode.__version__}"
-check("braindecode", check_braindecode)
-
 # Scikit-learn
 def check_sklearn():
     import sklearn

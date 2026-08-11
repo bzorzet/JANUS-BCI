@@ -1,3 +1,5 @@
+import logging
+import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -9,10 +11,82 @@ from src.utils.paths import PATHS
 from .base import BaseEEGDataset
 from .subject import Subject
 
+logger = logging.getLogger(__name__)
+
+# Wasabi S3 mirror used by GigaDB for this dataset (DOI 10.5524/100542).
+WASABI_URL = "https://s3.ap-northeast-1.wasabisys.com/gigadb-datasets/live/pub/10.5524/100001_101000/100542/"
+
 
 class Lee2019(BaseEEGDataset):
     """
-    Motor Imagery dataset from Lee et al. 2019 (GigaScience, DOI 10.5524/100542).
+    Multi-paradigm BCI dataset from Lee et al. 2019 (OpenBMI, GigaScience).
+
+    This dataset contains EEG and EMG recordings from 54 subjects performing
+    three canonical BCI paradigms across two recording sessions on different
+    days: motor imagery (MI), event-related potential (ERP) speller, and
+    steady-state visually evoked potential (SSVEP).
+
+    References
+    ----------
+    .. [1] Lee, M.H., Kwon, O.Y., Kim, Y.J., Kim, H.K., Lee, Y.E., Williamson, J.,
+        Fazli, S. and Lee, S.W., 2019. EEG dataset and OpenBMI toolbox for
+        three BCI paradigms: an investigation into BCI illiteracy.
+        GigaScience, 8(5). https://doi.org/10.1093/gigascience/giz002
+
+    Data Structure & Channels
+    --------------------------
+    Raw data is distributed as MATLAB structures (*.mat), one file per
+    paradigm per session, each containing separate train/test structs
+    (e.g. EEG_MI_train, EEG_MI_test).
+    *   **Sampling Rate:** 1000 Hz
+    *   **Channels 1-62:** EEG, 10-20 system, nasion-referenced, grounded at AFz
+    *   **Channels 63-66:** EMG (both flexor digitorum profundus muscles)
+    *   Exact channel order/names are read from the 'chan' field of each .mat
+        struct, not hardcoded -- unlike Cho2017, OpenBMI provides this
+        per-recording.
+
+    Note: this loader currently only downloads/loads the MI-related files
+    (EEG_MI_train / EEG_MI_test) for both sessions -- ERP, SSVEP and Artifact
+    files are not fetched by download() by default, since they are outside
+    this project's current use of the dataset.
+
+    Experiment Protocols & Trials
+    ------------------------------
+    Two sessions per subject, on different days, identical protocol. Order
+    within a session: ERP, MI, SSVEP.
+
+    +-------------------+--------------------------+---------------------+-------------------------------------------+
+    | Context           | Condition / Class        | Trials (Count)      | Description                                |
+    +===================+==========================+======================+=============================================+
+    | **Motor Imagery** | Left / Right Hand MI     | 100 train, 100 test | Subject imagines grasping with each hand.  |
+    | (MI)              |                          |                      |                                             |
+    +-------------------+--------------------------+---------------------+-------------------------------------------+
+    | **ERP (speller)** | Target / Non-target      | 1980 train,          | 6x6 row-column speller, random-set +       |
+    |                   |                          | 2160 test            | face-stimuli presentation.                 |
+    +-------------------+--------------------------+---------------------+-------------------------------------------+
+    | **SSVEP**         | 5.45/6.67/8.57/12 Hz     | 100 train, 100 test  | Four flicker frequencies, one per          |
+    |                   |                          |                      | direction (down/right/left/up).            |
+    +-------------------+--------------------------+---------------------+-------------------------------------------+
+    | **Resting state** | Eyes open, no task       | 20 recordings        | Recorded before/after every run.           |
+    +-------------------+--------------------------+---------------------+-------------------------------------------+
+    | **Noise**         | Eye blink, eye movement  | 5 x 10s recordings   | Intentional artifact recordings, once      |
+    | (Artifacts)       | (h/v), jaw clenching,    |                      | per session.                                |
+    |                   | arm flexing              |                      |                                             |
+    +-------------------+--------------------------+---------------------+-------------------------------------------+
+
+    Metadata Fields
+    -----------------
+    Each .mat struct includes:
+    *   **x:** continuous EEG/EMG signal (data points x channels)
+    *   **t:** stimulus onset sample indices for each trial
+    *   **fs:** sampling rate (1000 Hz)
+    *   **y_dec / y_logic:** class labels, integer and one-hot encoded
+    *   **y_class:** class name definitions
+    *   **chan:** channel names, in recording order
+
+    Participant metadata (age 24-35, 25 female, handedness, prior BCI
+    experience, pre/post-session questionnaires) is available separately per
+    subject -- not currently parsed by this loader.
     """
     def __init__(self, sessions = ["session_1", "session_2"], subjects=None, data_to_load = None):
         # 1. Define specific configuration for Lee2019
@@ -30,16 +104,13 @@ class Lee2019(BaseEEGDataset):
         self.sfreq = 1000
         self.standard_montage = "standard_1005"
 
-        eeg_ch = ['Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8', 'FC5', 'FC1', 'FC2', 'FC6',
-                'T7', 'C3', 'Cz', 'C4', 'T8', 'TP9', 'CP5', 'CP1', 'CP2', 'CP6', 'TP10',
-                'P7', 'P3', 'Pz', 'P4', 'P8', 'PO9', 'O1', 'Oz', 'O2', 'PO10', 'FC3', 'FC4',
-                'C5', 'C1', 'C2', 'C6', 'CP3', 'CPz', 'CP4', 'P1', 'P2', 'POz', 'FT9', 'FTT9h',
-                'TTP7h', 'TP7', 'TPP9h', 'FT10', 'FTT10h', 'TPP8h', 'TP8', 'TPP10h',
-                'F9', 'F10', 'AF7', 'AF3', 'AF4', 'AF8', 'PO3', 'PO4']
-        emg_ch = ['EMG1', 'EMG2', 'EMG3', 'EMG4']
-
-        self.ch_names = eeg_ch + emg_ch + ['stim']
-        self.ch_types = ["eeg"] * len(eeg_ch) + ["emg"] * len(emg_ch) + ['stim']
+        self.emg_ch_names = ['EMG1', 'EMG2', 'EMG3', 'EMG4']
+        # EEG channel order/names vary per recording in OpenBMI, so they
+        # are read from the 'chan' field of each .mat file in get_subject()
+        # instead of being fixed here -- not known until a subject is
+        # actually loaded.
+        self.ch_names = []
+        self.ch_types = []
 
         # En el futuro se pueden agregar los otros data_availables acá.
         self.data_availables = ['motor_imagery']
@@ -68,11 +139,47 @@ class Lee2019(BaseEEGDataset):
         return subjects_metadata
 
     def download(self):
-        raise NotImplementedError(
-            "TODO: descarga de GigaDB (DOI 10.5524/100542) — pendiente de confirmar "
-            f"fuente/mirror. Verificá que los datos ya estén en {self.dataset_path} "
-            "o descargalos manualmente (ver https://doi.org/10.5524/100542)."
-        )
+        """Download the per-subject, per-session EEG_MI .mat files (each
+        one bundles both EEG_MI_train and EEG_MI_test, both in scope)
+        from the GigaDB Wasabi mirror (DOI 10.5524/100542), skipping
+        files already present on disk. database_information.csv is a
+        hand-curated file and is never downloaded here -- only checked
+        for, with a warning if missing, since download() must not fail
+        because of it."""
+        dest_root = Path(self.dataset_path)
+        for session in self.sessions:
+            session_num = int(session.split('_')[-1])
+            for subject_id in self.subject_list:
+                filename = f"sess{session_num:02d}_subj{subject_id:02d}_EEG_MI.mat"
+                dest_path = dest_root / f"session{session_num}" / f"s{subject_id}" / filename
+                if dest_path.exists() and dest_path.stat().st_size > 1024:
+                    logger.info(
+                        "Skipping subject %d session %d: %s already exists",
+                        subject_id, session_num, filename,
+                    )
+                    continue
+
+                url = WASABI_URL + f"session{session_num}/s{subject_id}/{filename}"
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                logger.info("Downloading subject %d session %d from %s", subject_id, session_num, url)
+                try:
+                    urllib.request.urlretrieve(url, dest_path)
+                except KeyboardInterrupt:
+                    if dest_path.exists():
+                        dest_path.unlink()
+                    raise
+                except Exception as e:
+                    logger.error("Failed to download %s: %s", filename, e)
+                    if dest_path.exists():
+                        dest_path.unlink()
+
+        metadata_path = dest_root / "database_information.csv"
+        if not metadata_path.exists():
+            logger.warning(
+                "database_information.csv not found at %s -- this file is a hand "
+                "curation, not downloaded automatically. Copy it there manually.",
+                metadata_path,
+            )
 
     def get_subject(self, subject_id: int, session: str = "session_1") -> Subject:
         # Mismo patrón de manejo de path/errores que Cho2017/Dreyer2023Base:
@@ -85,15 +192,33 @@ class Lee2019(BaseEEGDataset):
             return None
 
         mat = loadmat(file_path)
+        train_struct = mat["EEG_MI_train"][0, 0]
+
+        # Channel order/names for this specific recording -- see the
+        # 'chan'-field note in the class docstring and __init__.
+        eeg_ch_names = self._read_channel_names(train_struct)
+        self.ch_names = eeg_ch_names + self.emg_ch_names + ['stim']
+        self.ch_types = ["eeg"] * len(eeg_ch_names) + ["emg"] * len(self.emg_ch_names) + ['stim']
+
         subject_data = {}
         for data in self.data_to_load:
             subject_data[data] = {}
             if data == "motor_imagery":
-                raw_train = self._create_raw_task(mat["EEG_MI_train"][0, 0])
+                raw_train = self._create_raw_task(train_struct)
                 subject_data[data]['run_1'] = raw_train
         # Metadatos siempre en la raíz
         subject_data['extra_info'] = self._obtain_extra_info(subject_id)
         return Subject(subject_id=subject_id, subject_dict=subject_data)
+
+    @staticmethod
+    def _read_channel_names(data_struct) -> list:
+        """Read EEG channel names from the 'chan' field of a loaded
+        EEG_MI_train/test struct. Defensive against the exact wrapping
+        scipy.io.loadmat produces for MATLAB cellstr arrays (same
+        double np.atleast_1d pattern already used for 't'/'y_dec' in
+        _create_raw_task)."""
+        chan_field = np.atleast_1d(data_struct["chan"]).flatten()
+        return [str(np.atleast_1d(entry).flatten()[0]) for entry in chan_field]
 
     def _obtain_extra_info(self, subject_id):
         # Metadatos base (frecuencia, canales, montaje)
