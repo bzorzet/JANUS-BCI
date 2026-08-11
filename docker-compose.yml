@@ -36,10 +36,16 @@ services:
     volumes:
       - .:/workspace
       - ${JANUS_DATA_ROOT}:/data:ro
+      - ${JANUS_DATA_ROOT}/preprocessed:/data/preprocessed
       - ${JANUS_RESULTS_ROOT}:/results
       - ${JANUS_SANDBOX_ROOT}:/sandbox
     env_file:
       - .env
+    environment:
+      JANUS_REPO_ROOT: /workspace
+      JANUS_DATA_ROOT: /data
+      JANUS_RESULTS_ROOT: /results
+      JANUS_SANDBOX_ROOT: /sandbox
     stdin_open: true
     tty: true
 
@@ -53,9 +59,15 @@ services:
     volumes:
       - .:/workspace
       - ${JANUS_DATA_ROOT}:/data:ro
+      - ${JANUS_DATA_ROOT}/preprocessed:/data/preprocessed
       - ${JANUS_RESULTS_ROOT}:/results
       - ${JANUS_SANDBOX_ROOT}:/sandbox
     env_file:
       - .env
+    environment:
+      JANUS_REPO_ROOT: /workspace
+      JANUS_DATA_ROOT: /data
+      JANUS_RESULTS_ROOT: /results
+      JANUS_SANDBOX_ROOT: /sandbox
     stdin_open: true
     tty: true

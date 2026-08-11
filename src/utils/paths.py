@@ -14,6 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class JanusPaths(BaseSettings):
+    "JANUS PATH Complete description later"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Debe existir SIEMPRE (es el propio repo corriendo) -> falla si no.
@@ -36,19 +37,30 @@ class JanusPaths(BaseSettings):
 
     @property
     def analytics_db(self) -> Path:
+        "complete the definition later"
         return self.janus_analytics_db or (self.janus_repo_root / "db" / "janus_analytics.db")
 
     @property
     def data_root(self) -> Path:
+        "complete the definition later"
         return self.janus_data_root
 
     @property
     def results_root(self) -> Path:
+        "complete the definition later"
         return self.janus_results_root
 
     @property
     def sandbox_root(self) -> Path:
+        "complete the definition later"
         return self.janus_sandbox_root
+
+    @property
+    def preprocessed_root(self) -> Path:
+        "complete the definition later"
+        root = self.janus_data_root / "preprocessed"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
 
 
 # Se instancia una sola vez al importar el módulo. Cualquier .env mal

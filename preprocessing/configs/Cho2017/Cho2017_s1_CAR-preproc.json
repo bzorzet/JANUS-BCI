@@ -1,0 +1,107 @@
+{
+    "preprocessing_name": "CAR-preprocessing",
+    "script_type": "preprocessing",
+    "database": {
+        "class_name": "Cho2017",
+        "module_name": "src.eeg_datasets",
+        "kwargs": {
+            "sessions": ["session_1"],
+            "subjects": null,
+            "data_to_load": ["motor_imagery"]
+        }
+    },
+    "preprocessing_pipeline": {
+        "stages": [
+            {
+                "stage_name": "raw_filter_car",
+                "stage_type": "steps",
+                "target": "raw",
+                "steps": [
+                    {
+                        "type": "method",
+                        "name": "filter",
+                        "module_name": null,
+                        "kwargs": {
+                            "l_freq": 1.0, "h_freq": 40.0, "picks": "eeg", "filter_length": "auto",
+                            "l_trans_bandwidth": "auto", "h_trans_bandwidth": "auto", "n_jobs": null,
+                            "method": "fir", "iir_params": null, "phase": "zero", "fir_window": "hamming",
+                            "fir_design": "firwin", "skip_by_annotation": ["edge", "bad_acq_skip"],
+                            "pad": "reflect_limited", "verbose": false
+                        }
+                    },
+                    {
+                        "type": "method",
+                        "name": "notch_filter",
+                        "module_name": null,
+                        "kwargs": {
+                            "freqs": [60.0], "picks": "eeg", "filter_length": "auto",
+                            "notch_widths": null, "trans_bandwidth": 1.0, "n_jobs": null,
+                            "method": "fir", "iir_params": null, "mt_bandwidth": null, "p_value": 0.05,
+                            "phase": "zero", "fir_window": "hamming", "fir_design": "firwin",
+                            "pad": "reflect_limited", "skip_by_annotation": ["edge", "bad_acq_skip"],
+                            "verbose": false
+                        }
+                    },
+                    {
+                        "type": "method",
+                        "name": "set_eeg_reference",
+                        "module_name": null,
+                        "kwargs": {
+                            "ref_channels": "average", "projection": false, "ch_type": "eeg",
+                            "forward": null, "joint": false, "verbose": false
+                        }
+                    }
+                ]
+            },
+            {
+                "stage_name": "epoching",
+                "stage_type": "epoching",
+                "config": {
+                    "event_id": { "left_hand": 1, "right_hand": 2 },
+                    "tmin": 0.5, "tmax": 2.5,
+                    "decim": 4,
+                    "baseline": null,
+                    "picks": null,
+                    "preload": true,
+                    "reject": null,
+                    "flat": null,
+                    "proj": true,
+                    "reject_tmin": null,
+                    "reject_tmax": null,
+                    "detrend": null,
+                    "on_missing": "raise",
+                    "reject_by_annotation": true,
+                    "metadata": null,
+                    "event_repeated": "error",
+                    "verbose": false
+                }
+            },
+            {
+                "stage_name": "epoch_postprocessing",
+                "stage_type": "steps",
+                "target": "epochs",
+                "steps": [
+                    {
+                        "type": "method",
+                        "name": "crop",
+                        "module_name": null,
+                        "kwargs": { "tmin": 0.5, "tmax": 2.5, "include_tmax": false }
+                    },
+                    {
+                        "type": "function",
+                        "name": "normalize_by_mean_std",
+                        "module_name": "src.preprocessing",
+                        "kwargs": {}
+                    },
+                    {
+                        "type": "function",
+                        "name": "extract_data_from_epochs",
+                        "module_name": "src.preprocessing",
+                        "kwargs": {}
+                    }
+                ]
+            }
+        ]
+    },
+    "description": "Classical preprocessing pipeline for MI-EEG data"
+}

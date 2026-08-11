@@ -1,0 +1,84 @@
+{
+    "preprocessing_name": "<project>-<recipe-label>-preprocessing",
+    "script_type": "preprocessing",
+    "database": {
+        "class_name": "<DatasetClassName>",
+        "module_name": "src.eeg_datasets",
+        "kwargs": {
+            "sessions": ["session_1"],
+            "subjects": null,
+            "data_to_load": ["motor_imagery"]
+        }
+    },
+    "preprocessing_pipeline": {
+        "stages": [
+            {
+                "stage_name": "raw_filter",
+                "stage_type": "steps",
+                "target": "raw",
+                "steps": [
+                    {
+                        "type": "method",
+                        "name": "filter",
+                        "module_name": null,
+                        "kwargs": { "l_freq": 1.0, "h_freq": 100.0, "verbose": false }
+                    },
+                    {
+                        "type": "method",
+                        "name": "notch_filter",
+                        "module_name": null,
+                        "kwargs": { "freqs": [60.0], "verbose": false }
+                    },
+                    {
+                        "type": "method",
+                        "name": "set_eeg_reference",
+                        "module_name": null,
+                        "kwargs": { "ref_channels": "average", "verbose": false }
+                    }
+                ]
+            },
+            {
+                "stage_name": "ica_cleaning",
+                "stage_type": "ica",
+                "target": "raw",
+                "config": {
+                    "ica_instance": {
+                        "class_name": "ICA",
+                        "module_name": "mne.preprocessing",
+                        "kwargs": { "n_components": 10, "method": "infomax", "random_state": 97 }
+                    },
+                    "ica_fit": { "picks": "eeg", "reject_by_annotation": true },
+                    "ica_label": { "method": "iclabel", "labels_to_keep": ["brain", "other"] }
+                }
+            },
+            {
+                "stage_name": "raw_filter_post_ica",
+                "stage_type": "steps",
+                "target": "raw",
+                "steps": [
+                    {
+                        "type": "method",
+                        "name": "filter",
+                        "module_name": null,
+                        "kwargs": { "l_freq": 1.0, "h_freq": 40.0, "verbose": false }
+                    }
+                ]
+            },
+            {
+                "stage_name": "epoching",
+                "stage_type": "epoching",
+                "config": {
+                    "event_id": { "left_hand": 1, "right_hand": 2 },
+                    "tmin": -1.5,
+                    "tmax": 3.5,
+                    "decim": 4,
+                    "baseline": null,
+                    "preload": true,
+                    "reject_by_annotation": true,
+                    "verbose": false
+                }
+            }
+        ]
+    },
+    "description": "Template de config de preprocessing — copiar y adaptar. Un preprocesamiento sin ICA es la misma estructura sacando el stage 'ica_cleaning' (ver DESIGN.md seccion 3)."
+}

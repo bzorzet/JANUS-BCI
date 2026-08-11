@@ -1,0 +1,39 @@
+{
+    // Use IntelliSense para saber los atributos posibles.
+    // Mantenga el puntero para ver las descripciones de los existentes atributos.
+    // Para más información, visite: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Depurador de Python: Archivo actual",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "run_production.py (elegir config)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/run_production.py",
+            "args": ["--config", "${input:configPath}"],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "JANUS_REPO_ROOT": "/workspace",
+                "JANUS_DATA_ROOT": "/data",
+                "JANUS_RESULTS_ROOT": "/results",
+                "JANUS_SANDBOX_ROOT": "/sandbox"
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "configPath",
+            "type": "promptString",
+            "description": "Path al JSON (relativo al repo)",
+            "default": "temp/Cho2017_s1_CAR-preproc.json"
+        }
+    ]
+}

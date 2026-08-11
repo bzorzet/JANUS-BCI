@@ -9,7 +9,7 @@ db/*.db
 # ── Resultados (viven en RESULTS_ROOT fuera del repo) ────────
 results/
 /data/
-
+repo_viejo/
 # ── Sandbox ───────────────────────────────────────────────────
 sandbox/**/output/
 sandbox/**/.ipynb_checkpoints/

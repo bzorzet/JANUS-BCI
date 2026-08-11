@@ -143,13 +143,17 @@ Ejemplo:
 
 ### Preprocessing
 ```
-{project}_{dataset}_{session}_{preprocessing-name}.json
+{dataset}_{session}_{preprocessing-name}.json
 ```
 Ejemplo:
 ```
-2026-NID_Cho2017_s1_CAR-preproc.json
-2026-NID_Lee2019_s1_ICA10-preproc.json
+Cho2017_s1_CAR-preproc.json
+Lee2019_s1_ICA10-preproc.json
 ```
+Sin `project_name`: un mismo `{dataset}_{session}` puede tener varios
+proyectos usando el mismo preprocesamiento, y el proyecto que lo generó
+queda registrado en el `preprocessing_name` interno del JSON, no en el
+nombre de archivo. Ver `preprocessing/DESIGN.md` sección 5.
 
 **Reglas:**
 - `_` separa campos, `-` separa palabras dentro de un campo

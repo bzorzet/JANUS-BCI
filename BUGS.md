@@ -25,6 +25,47 @@ cronológico inverso — lo más reciente primero).
 ```
 
 ---
+## 2026-08-10 — `EROFS` al preprocesar dentro del contenedor: env var confunde path del host con path del contenedor
+
+**Síntoma:** OSError: [Errno 30] Read-only file system: '/data/JANUS-BCI-results' al importar `src.preprocessing` (dispara `PATHS = JanusPaths()` en `src/utils/paths.py`),
+corriendo `scripts/run_production.py` dentro de `bci-gpu`/`bci-cpu`.
+
+**Causa raíz:** `docker-compose.yml` monta `${JANUS_RESULTS_ROOT}:/results`, pero
+`env_file: .env` además propaga `JANUS_RESULTS_ROOT` —con el valor del host,
+`/data/JANUS-BCI-results`— como variable de entorno *adentro* del contenedor.
+`PATHS` lee esa variable para saber dónde escribir, así que terminaba armando
+rutas contra `/data/JANUS-BCI-results`, que ahí adentro no es ningún mount —
+es una subcarpeta de `/data`, el bind **read-only** de `JANUS_DATA_ROOT`.
+
+**Fix:** agregar un bloque `environment:` a `bci-gpu`/`bci-cpu` que pisa las
+variables de `env_file` con los paths tal como se ven adentro del contenedor
+(Compose aplica `environment:` después de `env_file:`, gana el valor fijo):
+```yaml
+environment:
+  JANUS_REPO_ROOT: /workspace
+  JANUS_DATA_ROOT: /data
+  JANUS_RESULTS_ROOT: /results
+  JANUS_SANDBOX_ROOT: /sandbox
+```
+
+**Cómo se detectó:** `docker inspect <container> --format '{{json .Mounts}}'`
+mostró el mount real (`/data/JANUS-BCI-results → /results`, `RW: true`),
+contra `docker compose config` mostrando la env var apuntando a otro lado —
+la discrepancia entre ambos fue la señal.
+
+**Lección:** cualquier variable de `.env` que se use tanto para el `source:`
+de un volumen como para ser leída desde adentro del contenedor tiene dos
+significados en conflicto. Si se agrega un volumen nuevo, declarar siempre
+el path "de adentro" explícito en `environment:` — nunca asumir que el
+valor de `.env` sirve tal cual del otro lado.
+
+**Adenda (mismo día):** el fix de `docker-compose.yml` no alcanza para debuggear
+desde VS Code — la extensión de Python carga `.env` por default en cualquier
+sesión de debug (`python.envFile`, aplica aunque no esté explícito en
+`.vscode/settings.json`), reintroduciendo el mismo conflicto de paths dentro
+del proceso debuggeado. Fix: agregar un bloque `"env"` explícito a la
+configuración en `.vscode/launch.json` con los paths de adentro del
+contenedor — `"env"` se aplica después de cualquier `envFile` y gana.
 
 ## [2026-08-09] `runArgs` se ignora en `devcontainer.json` cuando se usa `dockerComposeFile`
 
