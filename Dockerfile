@@ -49,6 +49,8 @@ RUN if [ "$USE_GPU" = "true" ]; then \
             --index-url https://download.pytorch.org/whl/cpu; \
     fi
 
+RUN git config --global --add safe.directory /workspace
+
 ENV PYTHONPATH=/workspace
 COPY . .
 CMD ["bash"]

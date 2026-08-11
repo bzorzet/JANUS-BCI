@@ -10,7 +10,14 @@ from typing import Optional
 
 
 def get_git_commit_hash() -> str:
-    return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL
+        ).strip()
+    except subprocess.CalledProcessError:
+        return "unknown-git-not-available"
 
 
 def log_reproducibility_trio(run_dir: Path, config: dict, docker_image: Optional[str] = None) -> None:
