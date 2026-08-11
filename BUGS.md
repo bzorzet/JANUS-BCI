@@ -25,6 +25,45 @@ cronológico inverso — lo más reciente primero).
 ```
 
 ---
+
+## [2026-08-11] Dev Containers — problemas de compatibilidad de versiones entre máquinas
+
+**Contexto:** Intentando usar VS Code Dev Containers desde tres
+contextos distintos: SSH desde laptop, físicamente en la PC del
+instituto, y vía AnyDesk.
+
+**Síntoma:**
+```
+Error al configurar el contenedor.
+Exit code 1
+```
+El contenedor quedaba en estado `Created` sin llegar a `Running`.
+
+**Causa:** VS Code Dev Containers instala un "VS Code Server" dentro
+del contenedor que tiene que coincidir exactamente con la versión
+del cliente VS Code. Con versiones distintas entre la sesión SSH
+y la sesión física, o tras una actualización de VS Code, el servidor
+no matchea y falla silenciosamente con `Exit code 1`.
+
+**Solución adoptada:** Abandonar Dev Containers para desarrollo
+diario. Usar el flujo más simple:
+- Desarrollo: VS Code Remote SSH + intérprete conda del host
+- Producción: `docker compose --profile gpu run bci-gpu`
+
+Docker sigue siendo parte del proyecto pero para su propósito
+original — reproducibilidad y ejecución en servidores — no como
+entorno de desarrollo diario.
+
+**Lección:** Dev Containers agrega una capa de complejidad que solo
+vale la pena cuando el equipo es grande y la consistencia del entorno
+entre muchos desarrolladores es crítica. Para investigación en
+solitario o equipo pequeño, conda local + Docker para producción
+es más robusto y con menos fricción.
+
+**Tags:** #docker #devcontainers #vscode
+
+
+---
 ## 2026-08-10 — `EROFS` al preprocesar dentro del contenedor: env var confunde path del host con path del contenedor
 
 **Síntoma:** OSError: [Errno 30] Read-only file system: '/data/JANUS-BCI-results' al importar `src.preprocessing` (dispara `PATHS = JanusPaths()` en `src/utils/paths.py`),

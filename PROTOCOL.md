@@ -242,6 +242,7 @@ preprocesamiento. Esta carpeta:
 
 ---
 
+
 ## 12. Ítems abiertos
 
 - **`hypersearch`** como `script_type` futuro — se define cuando
@@ -250,3 +251,7 @@ preprocesamiento. Esta carpeta:
   extraer `janus-core-base` cuando exista un segundo dominio real.
 - **Windows / Mac** en `SETUP.md` — pendiente hasta poder probarlo.
 - **Reglas de git** (branches, qué se commitea) — no definidas aún.
+- **Dev Containers** — descartado para desarrollo diario por problemas
+  de compatibilidad de versiones entre sesiones SSH y físicas.
+  Flujo adoptado: VS Code Remote SSH + `BCI_decoding_env` para
+  desarrollo, Docker solo para producción y servidores. Ver `BUGS.md`.
