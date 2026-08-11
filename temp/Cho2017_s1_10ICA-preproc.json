@@ -1,12 +1,12 @@
 {
-    "preprocessing_name": "10ICA-preprocessing",
+    "preprocessing_name": "just-for-test-ICA-preproc",
     "script_type": "preprocessing",
     "database": {
         "class_name": "Cho2017",
         "module_name": "src.eeg_datasets",
         "kwargs": {
             "sessions": ["session_1"],
-            "subjects": null,
+            "subjects": [1,2],
             "data_to_load": ["motor_imagery"]
         }
     },
@@ -22,7 +22,7 @@
                         "name": "filter",
                         "module_name": null,
                         "kwargs": {
-                            "l_freq": 1.0, "h_freq": 100.0, "picks": "eeg", "filter_length": "auto",
+                            "l_freq": 1.0, "h_freq": 70.0, "picks": "eeg", "filter_length": "auto",
                             "l_trans_bandwidth": "auto", "h_trans_bandwidth": "auto", "n_jobs": null,
                             "method": "fir", "iir_params": null, "phase": "zero", "fir_window": "hamming",
                             "fir_design": "firwin", "skip_by_annotation": ["edge", "bad_acq_skip"],

@@ -1,8 +1,8 @@
 {
-    "preprocessing_name": "10ICA-preprocessing",
+    "preprocessing_name": "simple-CAR-128Hz-preproc",
     "script_type": "preprocessing",
     "database": {
-        "class_name": "Dreyer2023A",
+        "class_name": "Cho2017",
         "module_name": "src.eeg_datasets",
         "kwargs": {
             "sessions": ["session_1"],
@@ -22,7 +22,7 @@
                         "name": "filter",
                         "module_name": null,
                         "kwargs": {
-                            "l_freq": 1.0, "h_freq": 100.0, "picks": "eeg", "filter_length": "auto",
+                            "l_freq": 1.0, "h_freq": 40.0, "picks": "eeg", "filter_length": "auto",
                             "l_trans_bandwidth": "auto", "h_trans_bandwidth": "auto", "n_jobs": null,
                             "method": "fir", "iir_params": null, "phase": "zero", "fir_window": "hamming",
                             "fir_design": "firwin", "skip_by_annotation": ["edge", "bad_acq_skip"],
@@ -34,7 +34,7 @@
                         "name": "notch_filter",
                         "module_name": null,
                         "kwargs": {
-                            "freqs": [50.0], "picks": "eeg", "filter_length": "auto",
+                            "freqs": [60.0], "picks": "eeg", "filter_length": "auto",
                             "notch_widths": null, "trans_bandwidth": 1.0, "n_jobs": null,
                             "method": "fir", "iir_params": null, "mt_bandwidth": null, "p_value": 0.05,
                             "phase": "zero", "fir_window": "hamming", "fir_design": "firwin",
@@ -54,64 +54,10 @@
                 ]
             },
             {
-                "stage_name": "ica_cleaning",
-                "stage_type": "ica",
-                "target": "raw",
-                "config": {
-                    "ica_instance": {
-                        "class_name": "ICA",
-                        "module_name": "mne.preprocessing",
-                        "kwargs": {
-                            "n_components": 10,
-                            "noise_cov": null,
-                            "random_state": 97,
-                            "method": "infomax",
-                            "fit_params": { "extended": true },
-                            "max_iter": 2000,
-                            "verbose": false
-                        }
-                    },
-                    "ica_fit": {
-                        "picks": "eeg",
-                        "start": null,
-                        "stop": null,
-                        "decim": null,
-                        "reject": null,
-                        "flat": null,
-                        "tstep": 2.0,
-                        "reject_by_annotation": true,
-                        "verbose": null
-                    },
-                    "ica_label": {
-                        "method": "iclabel",
-                        "labels_to_keep": ["brain", "other"]
-                    }
-                }
-            },
-            {
-                "stage_name": "raw_filter_post_ica",
-                "stage_type": "steps",
-                "target": "raw",
-                "steps": [
-                    {
-                        "type": "method",
-                        "name": "filter",
-                        "module_name": null,
-                        "kwargs": {
-                            "l_freq": 1.0, "h_freq": 40.0, "picks": "eeg", "filter_length": "auto",
-                            "l_trans_bandwidth": "auto", "h_trans_bandwidth": "auto", "n_jobs": null,
-                            "method": "fir", "iir_params": null, "phase": "zero", "fir_window": "hamming",
-                            "fir_design": "firwin", "skip_by_annotation": ["edge", "bad_acq_skip"],
-                            "pad": "reflect_limited", "verbose": false
-                        }
-                    }
-                ]
-            },
-            {
                 "stage_name": "epoching",
                 "stage_type": "epoching",
                 "config": {
-                    "event_id": { "left_hand": 769, "right_hand": 770 },
+                    "event_id": { "left_hand": 1, "right_hand": 2 },
                     "tmin": 0.5, "tmax": 2.5,
                     "decim": 4,
                     "baseline": null,
@@ -157,5 +103,5 @@
             }
         ]
     },
-    "description": "ICA preprocessing pipeline for MI-EEG data"
+    "description": "Classical preprocessing pipeline for MI-EEG data"
 }
