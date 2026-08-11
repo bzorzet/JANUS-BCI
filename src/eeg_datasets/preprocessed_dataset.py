@@ -141,7 +141,7 @@ class PreprocessedDataset(BaseEEGDataset):
         prefix_to_remove = f"subject_{subject_id}_"
         files = sorted(os.listdir(sub_folder))
         for file in files:
-            if not file.endswith(('.fif', '.npy')) or "ica" in file.lower():
+            if not file.endswith(('.fif', '.npy', '.npz')) or "ica" in file.lower():
                 continue
 
             file_path = os.path.join(sub_folder, file)
@@ -160,10 +160,16 @@ class PreprocessedDataset(BaseEEGDataset):
 
             # Parse remainder: context_specifier_type
             remainder = clean_name[len(found_context):].lstrip('_')
-            parts = remainder.split('_')
-
-            data_type = parts[-1] # data, labels, raw, epo
-            specifier = "_".join(parts[:-1]) if len(parts) > 1 else "default"
+            if file.endswith('.npz'):
+                # Un .npz combina data+labels en un solo archivo, sin
+                # sufijo de tipo en el nombre (a diferencia de los .npy
+                # sueltos) — todo el remainder es el specifier.
+                data_type = None
+                specifier = remainder if remainder else "default"
+            else:
+                parts = remainder.split('_')
+                data_type = parts[-1] # data, labels, raw, epo
+                specifier = "_".join(parts[:-1]) if len(parts) > 1 else "default"
 
             # Build nested dict
             if found_context not in subject_dict:
@@ -187,6 +193,16 @@ class PreprocessedDataset(BaseEEGDataset):
             if self.selected_channels is not None and len(data.shape) == 3:
                 data = data[:, self.selected_channels, :]
             return data
+
+        elif path.endswith('.npz'):
+            npz = np.load(path)
+            data = npz['data']
+            if self.selected_channels is not None and len(data.shape) == 3:
+                data = data[:, self.selected_channels, :]
+            result = {'data': data}
+            if 'labels' in npz.files:
+                result['labels'] = npz['labels']
+            return result
 
         elif path.endswith('_raw.fif'):
             raw = mne.io.read_raw_fif(path, preload=True, verbose=False)

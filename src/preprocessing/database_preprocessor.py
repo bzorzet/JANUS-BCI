@@ -7,11 +7,13 @@ saver (`register_artifact_saver`), no subclaseando este orquestador.
 """
 import csv
 import datetime
+import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 import mne
 import numpy as np
+import pandas as pd
 
 from src.utils.json_utils import save_dict_as_json
 from src.utils.paths import PATHS
@@ -19,6 +21,9 @@ from src.utils.reproducibility import log_reproducibility_trio
 
 from .artifact_savers import ARTIFACT_SAVERS
 from .preprocess_eeg import EEGPreprocessor, StageResult
+from .progress_reporter import ProgressReporter
+
+logger = logging.getLogger(__name__)
 
 
 def _save_processed_data(data: Any, base_path: Path, prefix: str) -> Optional[Path]:
@@ -35,19 +40,25 @@ def _save_processed_data(data: Any, base_path: Path, prefix: str) -> Optional[Pa
         return out
     elif isinstance(data, dict):
         last_out = None
-        if "data" in data:
-            data_content = data["data"]
-            if isinstance(data_content, dict):
-                for key, val in data_content.items():
-                    if isinstance(val, np.ndarray):
-                        last_out = base_path / f"{prefix}_{key}.npy"
-                        np.save(last_out, val)
-            elif isinstance(data_content, np.ndarray):
-                last_out = base_path / f"{prefix}_data.npy"
-                np.save(last_out, data_content)
-        if "labels" in data and isinstance(data["labels"], np.ndarray) and len(data["labels"]) > 0:
+        data_content = data.get("data")
+        labels_content = data.get("labels")
+        has_labels = isinstance(labels_content, np.ndarray) and len(labels_content) > 0
+        if isinstance(data_content, np.ndarray) and has_labels:
+            # data + labels planos: un solo .npz en vez de dos .npy sueltos.
+            last_out = base_path / f"{prefix}.npz"
+            np.savez(last_out, data=data_content, labels=labels_content)
+            return last_out
+        if isinstance(data_content, dict):
+            for key, val in data_content.items():
+                if isinstance(val, np.ndarray):
+                    last_out = base_path / f"{prefix}_{key}.npy"
+                    np.save(last_out, val)
+        elif isinstance(data_content, np.ndarray):
+            last_out = base_path / f"{prefix}_data.npy"
+            np.save(last_out, data_content)
+        if has_labels:
             last_out = base_path / f"{prefix}_labels.npy"
-            np.save(last_out, data["labels"])
+            np.save(last_out, labels_content)
         return last_out
     return None
 
@@ -70,11 +81,19 @@ def _now() -> str:
 
 
 class EEGDatabasePreprocessor:
-    def __init__(self, dataset, preprocessing_name: str, config: dict, docker_image: Optional[str] = None):
+    def __init__(
+        self,
+        dataset,
+        preprocessing_name: str,
+        config: dict,
+        docker_image: Optional[str] = None,
+        reporter: Optional[ProgressReporter] = None,
+    ):
         self.dataset = dataset
         self.preprocessing_name = preprocessing_name
         self.config = config
         self.docker_image = docker_image
+        self.reporter = reporter or ProgressReporter()
         self.output_path = PATHS.preprocessed_root / preprocessing_name / dataset.code
         self.output_path.mkdir(parents=True, exist_ok=True)
         self.worker = EEGPreprocessor(stages=config["preprocessing_pipeline"]["stages"])
@@ -91,16 +110,19 @@ class EEGDatabasePreprocessor:
 
         subjects_list = self.dataset.get_subjects_list()
         sessions = getattr(self.dataset, "sessions", ["session_1"])
-        print(f"Starting preprocessing for {len(subjects_list)} subjects...")
+        logger.info("Starting preprocessing for %d subjects...", len(subjects_list))
+        self.reporter.on_start(len(subjects_list) * len(sessions))
 
         for subject in subjects_list:
             for session in sessions:
                 try:
                     subject_obj = self.dataset.get_subject(subject, session=session)
                 except Exception as e:
-                    print(f"  CRITICAL ERROR loading subject {subject}: {e}")
+                    logger.error("CRITICAL ERROR loading subject %s: %s", subject, e)
+                    partition = f"subject_{subject:02d}/unknown/unknown"
+                    self.reporter.on_run_start(partition)
                     self._append_run_registry(
-                        partition=f"subject_{subject:02d}/unknown/unknown",
+                        partition=partition,
                         subject=subject,
                         session=session,
                         context=None,
@@ -110,13 +132,15 @@ class EEGDatabasePreprocessor:
                         ts_end=_now(),
                         output_path=None,
                     )
+                    self.reporter.on_run_result(partition, "failed")
                     continue
                 if subject_obj is None:
                     continue
                 for context, run_id, raw_data in subject_obj.iter_all_runs():
                     self._process_one_run(subject, session, context, run_id, raw_data)
 
-        print("--- Preprocessing Finished ---")
+        logger.info("--- Preprocessing Finished ---")
+        self.reporter.on_finish(self._build_summary())
 
     def _process_one_run(self, subject, session, context, run_id, raw_data) -> None:
         partition = f"subject_{subject:02d}/{context}/{run_id}"
@@ -124,8 +148,9 @@ class EEGDatabasePreprocessor:
         ts_start = _now()
         status = "failed"
         output_path = None
+        self.reporter.on_run_start(partition)
         try:
-            print(f"Processing {partition}")
+            logger.info("Processing %s", partition)
             result = self.worker.process(raw_data)
             data_dir = self.output_path / session / f"subject_{subject:02d}"
             output_path = _save_processed_data(result.data, data_dir, prefix)
@@ -134,7 +159,7 @@ class EEGDatabasePreprocessor:
             self._append_detail_tables(result.detail_tables, partition)
             status = "success"
         except Exception as e:
-            print(f"  ERROR processing {partition}: {e}")
+            logger.error("ERROR processing %s: %s", partition, e)
         finally:
             ts_end = _now()
             self._append_run_registry(
@@ -148,6 +173,7 @@ class EEGDatabasePreprocessor:
                 ts_end=ts_end,
                 output_path=str(output_path) if output_path else None,
             )
+            self.reporter.on_run_result(partition, status)
 
     def _save_artifacts(self, result: StageResult, subject, prefix: str) -> None:
         # Un saver que falla (ej. no puede graficar por falta de montage)
@@ -159,7 +185,10 @@ class EEGDatabasePreprocessor:
             for key, value in stage_artifacts.items():
                 saver = self._artifact_savers.get(key)
                 if saver is None:
-                    print(f"  (info) sin saver registrado para artifact '{key}' del stage '{stage_name}', se omite")
+                    logger.info(
+                        "sin saver registrado para artifact '%s' del stage '%s', se omite",
+                        key, stage_name,
+                    )
                     continue
                 output_dir = self.output_path / "artifacts" / stage_name / f"subject_{subject:02d}"
                 try:
@@ -171,7 +200,31 @@ class EEGDatabasePreprocessor:
                         prefix=prefix,
                     )
                 except Exception as e:
-                    print(f"  (warn) saver de artifact '{key}' del stage '{stage_name}' falló: {e}")
+                    logger.warning(
+                        "saver de artifact '%s' del stage '%s' falló: %s", key, stage_name, e,
+                    )
+
+    def _build_summary(self) -> Dict[str, Any]:
+        # Se lee de vuelta run_registry.csv/stage_metrics.csv en vez de
+        # acumular en memoria durante el barrido (DESIGN.md sección 4
+        # punto 4 pide no acumular, así un barrido cortado a mitad de
+        # camino deja los CSV consultables igual).
+        summary: Dict[str, Any] = {"total": 0, "success": 0, "failed": 0}
+        registry_path = self.output_path / "run_registry.csv"
+        if registry_path.exists():
+            registry = pd.read_csv(registry_path)
+            summary["total"] = len(registry)
+            status_counts = registry["status"].value_counts()
+            summary["success"] = int(status_counts.get("success", 0))
+            summary["failed"] = int(status_counts.get("failed", 0))
+        metrics_path = self.output_path / "stage_metrics.csv"
+        if metrics_path.exists():
+            metrics = pd.read_csv(metrics_path)
+            for (stage_name, metric_name), values in metrics.groupby(["stage_name", "metric_name"])["value"]:
+                numeric_values = pd.to_numeric(values, errors="coerce").dropna()
+                if len(numeric_values) > 0:
+                    summary[f"{stage_name}.{metric_name} (avg)"] = round(numeric_values.mean(), 4)
+        return summary
 
     def _append_stage_metrics(self, metrics: Dict[str, dict], partition: str) -> None:
         path = self.output_path / "stage_metrics.csv"

@@ -15,10 +15,15 @@ EEGDatabasePreprocessor (src/preprocessing/database_preprocessor.py).
 """
 import argparse
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
-from src.preprocessing import EEGDatabasePreprocessor
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.preprocessing import EEGDatabasePreprocessor, ProgressReporter, RichProgressReporter
 from src.utils.imports import import_class
 from src.utils.paths import PATHS
 
@@ -29,7 +34,7 @@ def make_run_dir(strategy: str, recipe: str, dataset: str, partition: str, repli
     return run_dir
 
 
-def run_preprocessing(config: dict, docker_image: Optional[str]) -> None:
+def run_preprocessing(config: dict, docker_image: Optional[str], reporter: ProgressReporter) -> None:
     """script_type == 'preprocessing'. El trío de reproducibilidad y el
     manifest los escribe el propio EEGDatabasePreprocessor.run()."""
     db_config = config["database"]
@@ -37,12 +42,12 @@ def run_preprocessing(config: dict, docker_image: Optional[str]) -> None:
     dataset = dataset_cls(**db_config["kwargs"])
 
     orchestrator = EEGDatabasePreprocessor(
-        dataset, config["preprocessing_name"], config, docker_image=docker_image
+        dataset, config["preprocessing_name"], config, docker_image=docker_image, reporter=reporter
     )
     orchestrator.run()
 
 
-def run_training(config: dict, docker_image: Optional[str]) -> None:
+def run_training(config: dict, docker_image: Optional[str], reporter: ProgressReporter) -> None:
     """script_type == 'train_dl' / 'train_ml'. TODO (ver CLAUDE.md 'Estado
     del proyecto'): iterar sobre context.partitions definidas en config,
     llamar a la lógica real de src/training o src/analysis por cada una,
@@ -65,9 +70,14 @@ DISPATCH = {
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True, help="temp/Cho2017_s1_CAR-preproc.json")
+    parser.add_argument("--config", help="Path to json config file",
+                        default="temp/Cho2017_s1_CAR-preproc.json")
     parser.add_argument("--docker-image", default=None)
+    parser.add_argument("--progress", choices=["none", "rich"], default="rich",
+                        help="Progreso en terminal: 'rich' para tabla+barra en vivo (debug interactivo), 'none' headless.")
     args = parser.parse_args()
 
     config = json.loads(Path(args.config).read_text())
@@ -80,7 +90,8 @@ def main():
             f"Soportados: {sorted(DISPATCH)} (PROTOCOL.md sección 2) — es un campo "
             "obligatorio explícito en todo config (PROTOCOL.md sección 5)."
         )
-    handler(config, args.docker_image)
+    reporter = RichProgressReporter() if args.progress == "rich" else ProgressReporter()
+    handler(config, args.docker_image, reporter)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 {
-    "preprocessing_name": "CAR-preprocessing",
+    "preprocessing_name": "just-for-test-simple-preproc",
     "script_type": "preprocessing",
     "database": {
         "class_name": "Cho2017",
