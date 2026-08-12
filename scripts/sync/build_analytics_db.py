@@ -14,6 +14,7 @@ pasaron por push_to_mlflow.py) — así runs y metrics siempre comparten
 el mismo run_id que ves en el dashboard de MLFlow.
 """
 import csv
+import json
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -23,6 +24,7 @@ from src.utils.paths import PATHS
 
 METRICS_FILENAME = "metrics_results.csv"
 MARKER_FILENAME = ".mlflow_run_id"
+CONFIG_FILENAME = "config.json"
 
 
 def parse_replicate(strategy_name: str, replicate: str) -> dict:
@@ -35,15 +37,35 @@ def parse_replicate(strategy_name: str, replicate: str) -> dict:
     """
     factors = {}
     if strategy_name.startswith("WS"):
-        # ej. split_8_model_399 -> fold=8, init_seed=399
         parts = replicate.split("_")
-        if len(parts) >= 4:
+        if replicate.startswith("seed_") and len(parts) == 2:
+            # WithinSubjectHoldoutSplitter (src/training/splitters.py): un
+            # solo split determinístico por sujeto, repetido por
+            # model_init_seed -- ej. seed_399 -> init_seed=399.
+            factors["init_seed"] = parts[1]
+        elif len(parts) >= 4:
+            # formato legado (repo_viejo): split_8_model_399 -> fold=8,
+            # init_seed=399.
             factors["fold"] = parts[1]
             factors["init_seed"] = parts[3]
     # TODO: agregar el parseo correspondiente cuando exista, por
     # ejemplo, Across-Dataset (factores: source_dataset, target_dataset)
     # o Across-Subject.
     return factors
+
+
+def _read_script_type(run_dir: Path, default: str = "train_dl") -> str:
+    """Lee `script_type` del config.json de la carpeta hoja (escrito por
+    log_reproducibility_trio) -- necesario desde que existen orquestadores
+    de test_dl/test_ml además de train_dl/train_ml (antes de este refactor
+    todo run era train_dl, por eso el default)."""
+    config_path = run_dir / CONFIG_FILENAME
+    if not config_path.exists():
+        return default
+    try:
+        return json.loads(config_path.read_text()).get("script_type", default)
+    except (json.JSONDecodeError, OSError):
+        return default
 
 
 def build(results_root: Path):
@@ -68,7 +90,7 @@ def build(results_root: Path):
                 project_name=results_root.name,  # ajustar si project_name != nombre de carpeta
                 strategy_name=strategy,
                 recipe_name=recipe,
-                script_type="train_dl",  # TODO: leer de config.json si el proyecto mezcla tipos
+                script_type=_read_script_type(run_dir),
                 context_source=dataset,
                 context_partition=partition,
                 context_replicate=replicate,

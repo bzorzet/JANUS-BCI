@@ -5,7 +5,8 @@
       "Read(//data/EEG_DATABASES/**)",
       "Bash(grep -viE \"^\\\\.$|^\\\\.\\\\.$\")",
       "Bash(docker --version)",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "Bash(conda env *)"
     ]
   }
 }

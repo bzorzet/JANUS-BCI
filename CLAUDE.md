@@ -70,8 +70,13 @@ empezar cada sesión de Claude Code.
 
 ## Estado del proyecto
 
-Esqueleto inicial. `run_production.py` y `push_to_mlflow.py` tienen
-TODOs marcados donde falta lógica de dominio (BCI). No hay todavía un
-segundo dominio (imágenes, PINNs) — no generalizar el `Dockerfile` ni
-crear `janus-core-base` hasta que exista uno real (ver PROTOCOL.md
-sección 10).
+`run_production.py` ya tiene lógica de dominio implementada para
+`train_dl`/`train_ml`/`test_dl`/`test_ml` (delega a `src/training/`,
+ver `src/training/orchestrator.py` y `orchestrator_testing.py`) y para
+`preprocessing`. Pendiente: migrar las arquitecturas DL reales
+(`src/networks/` en `repo_viejo/`, ej. CTNet/EEGNetv4) a `src/models/` o
+`src/networks/` — sin eso, los configs de ejemplo no corren de punta a
+punta todavía, aunque el subsistema de training/testing en sí ya está
+completo. No hay todavía un segundo dominio (imágenes, PINNs) — no
+generalizar el `Dockerfile` ni crear `janus-core-base` hasta que exista
+uno real (ver PROTOCOL.md sección 10).

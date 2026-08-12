@@ -25,10 +25,15 @@ Todo run se identifica con:
 - **`project_name`** — ej. `2026-NID`
 - **`strategy_name`** — semántica de validación: `WS-Standard`, `WS-LOSO`, `Across-Dataset`
 - **`recipe_name`** — modelo o pipeline: `CTNet`, `FBCSP`, `CAR-preproc`
-- **`script_type`** — `train_dl` | `train_ml` | `preprocessing` | `analysis` | `hypersearch` (futuro)
+- **`script_type`** — `train_dl` | `train_ml` | `test_dl` | `test_ml` | `preprocessing` | `analysis` | `hypersearch` (futuro)
 - **`context.source`** — dataset: `Cho2017`, `Lee2019`
 - **`context.partition`** — unidad evaluada: `subject_08`
-- **`context.replicate`** — corrida puntual: `split_8_seed_399`
+- **`context.replicate`** — corrida puntual: `seed_399` (una repetición de
+  `model_init_seed` sobre el split único y determinístico de
+  `WithinSubjectHoldoutSplitter` — WS-Standard no tiene un segundo eje de
+  "split seed" real, ver `src/training/splitters.py`). En testing, el
+  mismo `replicate` identifica de qué seed de origen vienen los pesos
+  evaluados, no una seed propia del testing.
 
 **Regla de oro:** el path a disco *es* el esquema. Factores nuevos
 (seed, fold, source_dataset...) son filas en `run_factors`, nunca
@@ -60,8 +65,13 @@ janus-bci/
 │   │   └── paths.py            # objeto PATHS — único acceso a rutas
 │   ├── models/                 # arquitecturas DL (CTNet, EEGNet...)
 │   ├── eeg_datasets/           # clases de carga de datos
-│   ├── torch_utils/            # DataLoader, callbacks, EarlyStopping
-│   ├── training/               # loop de entrenamiento genérico
+│   ├── torch_utils/            # Dataset/callbacks/EarlyStopping/set_seed/
+│   │                           # obtain_cuda_device — referenciados por
+│   │                           # class_name/module_name desde JSON de config,
+│   │                           # tienen que vivir físicamente acá
+│   ├── training/               # Trainer_DL/ML, Tester_DL/ML, CallbackDispatcher,
+│   │                           # Splitter, orquestadores de training/testing —
+│   │                           # nada de esto se referencia desde JSON de config
 │   ├── preprocessing/          # pipelines de señal (CAR, ICA...)
 │   └── analysis/               # métricas, estadísticas, espectral
 │

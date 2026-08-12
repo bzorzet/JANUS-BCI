@@ -5,11 +5,9 @@ repo_viejo — una forma nueva de preprocesar se agrega registrando un
 stage handler (`EEGPreprocessor.register_stage_handler`) o un artifact
 saver (`register_artifact_saver`), no subclaseando este orquestador.
 """
-import csv
 import datetime
 import json
 import logging
-import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -20,6 +18,7 @@ import pandas as pd
 from src.utils.json_utils import save_dict_as_json
 from src.utils.paths import PATHS
 from src.utils.reproducibility import log_reproducibility_trio
+from src.utils.run_lifecycle import RunLifecycleManager, _append_csv_row, _diff_values
 
 from .artifact_savers import ARTIFACT_SAVERS
 from .preprocess_eeg import EEGPreprocessor, StageResult
@@ -65,38 +64,8 @@ def _save_processed_data(data: Any, base_path: Path, prefix: str) -> Optional[Pa
     return None
 
 
-def _append_csv_row(path: Path, row: Dict[str, Any]) -> None:
-    """Append + flush por fila (abre/escribe/cierra) — nada se acumula en
-    memoria, así un barrido que se cae a mitad de camino deja consultable
-    todo lo ya procesado (DESIGN.md sección 4 punto 4)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not path.exists()
-    with open(path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
-
-
 def _now() -> str:
     return datetime.datetime.now().isoformat()
-
-
-def _diff_values(old: Any, new: Any, path: str) -> List[str]:
-    """Diff recursivo genérico, para armar el mensaje de 'qué claves
-    cambiaron' cuando el pipeline guardado no coincide con el nuevo."""
-    diffs: List[str] = []
-    if isinstance(old, dict) and isinstance(new, dict):
-        for key in sorted(set(old) | set(new)):
-            if key not in old:
-                diffs.append(f"{path}.{key}: agregado ({new[key]!r})")
-            elif key not in new:
-                diffs.append(f"{path}.{key}: eliminado (era {old[key]!r})")
-            elif old[key] != new[key]:
-                diffs.extend(_diff_values(old[key], new[key], f"{path}.{key}"))
-    elif old != new:
-        diffs.append(f"{path}: {old!r} -> {new!r}")
-    return diffs
 
 
 def _diff_pipeline(old_pipeline: Optional[dict], new_pipeline: Optional[dict]) -> List[str]:
@@ -149,6 +118,14 @@ class EEGDatabasePreprocessor:
         self._artifact_savers: Dict[str, Callable] = dict(ARTIFACT_SAVERS)
         self._done_partitions: set = set()
         self._metadata_enriched = False
+        self.lifecycle = RunLifecycleManager(
+            self.output_path,
+            progress_filename="run_registry.csv",
+            identity_filename="config.json",
+            force=force,
+            overwrite_existing=overwrite_existing,
+            emit_running_row=False,
+        )
 
     def register_artifact_saver(self, key: str, fn: Callable) -> None:
         self._artifact_savers[key] = fn
@@ -164,7 +141,13 @@ class EEGDatabasePreprocessor:
         # preprocessing_pipeline distinto para este preprocessing_name, no
         # seguimos en silencio (o pedimos --overwrite-existing, o
         # preguntamos por TTY, o rechazamos).
-        self._check_config_compatibility()
+        self.lifecycle.check_identity_or_raise(
+            new_config=self.config,
+            extract_identity=lambda c: c.get("preprocessing_pipeline"),
+            diff_fn=_diff_pipeline,
+            extra_cleanup=lambda: [p.unlink() for p in self.output_path.glob("*.csv")],
+            context_label=f"config.json (preprocessing_name='{self.preprocessing_name}')",
+        )
 
         # Trío de reproducibilidad + manifest, una sola vez, antes del loop
         # (DESIGN.md sección 4 punto 5).
@@ -177,11 +160,13 @@ class EEGDatabasePreprocessor:
         # Único chequeo de particiones ya resueltas, antes de cargar
         # ningún subject: se predice la lista completa sin I/O
         # (_build_partition_list) y se descarta lo ya hecho
-        # (_filter_pending) para saber, de antemano, qué (subject,
+        # (lifecycle.filter_pending) para saber, de antemano, qué (subject,
         # session) hace falta cargar de verdad.
         self._done_partitions = set() if self.force else self._load_done_partitions()
         all_partitions = self._build_partition_list()
-        pending = all_partitions if self.force else self._filter_pending(all_partitions)
+        pending = all_partitions if self.force else self.lifecycle.filter_pending(
+            all_partitions, self._done_partitions, key=lambda item: item[2]
+        )
 
         if not pending:
             logger.info(
@@ -339,19 +324,13 @@ class EEGDatabasePreprocessor:
             for context in contexts
         ]
 
-    def _filter_pending(self, partitions: List[Tuple[int, str, str]]) -> List[Tuple[int, str, str]]:
-        """Drops predicted partitions already marked 'success' in
-        run_registry.csv with their output still present on disk (same
-        'done' definition as the per-run check, see
-        _load_done_partitions -- self._done_partitions must already be
-        populated before calling this)."""
-        return [(subject, session, p) for subject, session, p in partitions if p not in self._done_partitions]
-
     def _load_done_partitions(self) -> set:
         """Partitions con status == 'success' en run_registry.csv que
         además tienen su archivo de salida presente en disco — se saltean
-        en este barrido. Si una partition aparece más de una vez (barridos
-        --force previos), se toma la fila más reciente."""
+        en este barrido. Delegado a RunLifecycleManager.load_success_partitions;
+        la columna `output_path` (dónde vive el criterio de "¿sigue en
+        disco?") es un detalle específico de este CSV, así que se resuelve
+        acá y no en el componente compartido."""
         registry_path = self.output_path / "run_registry.csv"
         if not registry_path.exists():
             return set()
@@ -359,66 +338,15 @@ class EEGDatabasePreprocessor:
         if registry.empty:
             return set()
         latest = registry.drop_duplicates(subset="partition", keep="last")
-        done = set()
-        for _, row in latest.iterrows():
-            if row.get("status") != "success":
-                continue
-            output_path = row.get("output_path")
-            if pd.isna(output_path) or not output_path:
-                continue
-            if Path(str(output_path)).exists():
-                done.add(row["partition"])
-        return done
+        output_by_partition = latest.set_index("partition")["output_path"].to_dict()
 
-    def _check_config_compatibility(self) -> None:
-        """DESIGN.md no define esto — regla nueva: preprocessing_name
-        identifica una receta (sección 2), así que si config.json ya
-        existe acá con un preprocessing_pipeline distinto, no seguimos en
-        silencio (mezclaría resultados de dos recetas bajo el mismo
-        nombre)."""
-        config_path = self.output_path / "config.json"
-        if not config_path.exists():
-            return
+        def _still_present(partition: str) -> bool:
+            output_path = output_by_partition.get(partition)
+            if output_path is None or (isinstance(output_path, float) and pd.isna(output_path)):
+                return False
+            return Path(str(output_path)).exists()
 
-        existing_config = json.loads(config_path.read_text())
-        existing_pipeline = existing_config.get("preprocessing_pipeline")
-        new_pipeline = self.config.get("preprocessing_pipeline")
-        if existing_pipeline == new_pipeline:
-            return
-
-        diffs = _diff_pipeline(existing_pipeline, new_pipeline)
-        message = (
-            f"El config.json existente en {self.output_path} tiene un "
-            f"preprocessing_pipeline distinto al de este config para "
-            f"preprocessing_name='{self.preprocessing_name}':\n"
-            + "\n".join(f"  - {d}" for d in diffs)
-            + "\nUsá un preprocessing_name distinto para un pipeline nuevo, "
-            "o --overwrite-existing si estás seguro de reemplazar la corrida anterior."
-        )
-
-        if self.overwrite_existing:
-            logger.warning("Pipeline distinto detectado — sobrescribiendo por --overwrite-existing.")
-            self._reset_output_for_overwrite()
-            return
-
-        if sys.stdin.isatty():
-            answer = input(f"{message}\n¿Sobrescribir de todas formas? [y/N]: ").strip().lower()
-            if answer == "y":
-                self._reset_output_for_overwrite()
-                return
-            raise RuntimeError(f"Corrida cancelada por el usuario.\n{message}")
-
-        # Sin TTY (batch/cron): nunca bloquear esperando input, rechazar duro.
-        raise RuntimeError(message)
-
-    def _reset_output_for_overwrite(self) -> None:
-        """--overwrite-existing: config.json/.git_commit/.docker_image se
-        sobrescriben solos más abajo (log_reproducibility_trio corre
-        siempre); acá limpiamos lo que si no quedaría mezclado con la
-        corrida anterior — run_registry.csv, stage_metrics.csv y las
-        detail tables por stage."""
-        for path in self.output_path.glob("*.csv"):
-            path.unlink()
+        return self.lifecycle.load_success_partitions(still_present=_still_present)
 
     def _build_summary(self) -> Dict[str, Any]:
         # Se lee de vuelta run_registry.csv/stage_metrics.csv en vez de

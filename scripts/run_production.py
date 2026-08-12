@@ -24,6 +24,8 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.preprocessing import EEGDatabasePreprocessor, ProgressReporter, RichProgressReporter
+from src.training.orchestrator import run_training_sweep
+from src.training.orchestrator_testing import run_testing_sweep
 from src.utils.imports import import_class
 from src.utils.paths import PATHS
 
@@ -61,24 +63,32 @@ def run_training(
     force: bool = False,
     overwrite_existing: bool = False,
 ) -> None:
-    """script_type == 'train_dl' / 'train_ml'. TODO (ver CLAUDE.md 'Estado
-    del proyecto'): iterar sobre context.partitions definidas en config,
-    llamar a la lógica real de src/training o src/analysis por cada una,
-    usar make_run_dir() + log_reproducibility_trio() por partition, y
-    escribir script_progress.csv (una fila por partition) y
-    metrics_results.csv (una fila por métrica) siguiendo el contrato
-    exacto de PROTOCOL.md sección 6."""
-    raise NotImplementedError(
-        f"script_type '{config.get('script_type')}' todavía no tiene lógica de "
-        "dominio implementada (ver TODOs de src/training). No es un error de "
-        "config — falta escribir el entrenamiento en sí."
-    )
+    """script_type == 'train_dl' / 'train_ml'. Delega a
+    src.training.orchestrator.run_training_sweep -- este archivo es un
+    entrypoint delgado, la lógica de dominio vive en src/training/."""
+    run_training_sweep(config, docker_image, reporter, force=force, overwrite_existing=overwrite_existing)
+
+
+def run_testing(
+    config: dict,
+    docker_image: Optional[str],
+    reporter: ProgressReporter,
+    force: bool = False,
+    overwrite_existing: bool = False,
+) -> None:
+    """script_type == 'test_dl' / 'test_ml'. Delega a
+    src.training.orchestrator_testing.run_testing_sweep -- evalúa modelos ya
+    entrenados (posiblemente con un dataset/ablación distinto al de
+    training), no reentrena nada."""
+    run_testing_sweep(config, docker_image, reporter, force=force, overwrite_existing=overwrite_existing)
 
 
 DISPATCH = {
     "preprocessing": run_preprocessing,
     "train_dl": run_training,
     "train_ml": run_training,
+    "test_dl": run_testing,
+    "test_ml": run_testing,
 }
 
 
@@ -88,11 +98,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Path to json config file",
                         default="/home/bzorzet/JANUS-BCI/preprocessing/configs/Cho2017/Cho2017_s1_simple-CAR-128Hz-preproc.json")
+    
     parser.add_argument("--docker-image", default=None)
+    
     parser.add_argument("--progress", choices=["none", "rich"], default="rich",
                         help="Progreso en terminal: 'rich' para tabla+barra en vivo (debug interactivo), 'none' headless.")
+    
     parser.add_argument("--force", action="store_true",
                         help="Ignora run_registry.csv y reprocesa todo, incluso lo ya marcado success.")
+    
     parser.add_argument("--overwrite-existing", action="store_true",
                         help="Si el preprocessing_pipeline guardado difiere del actual, sobrescribe "
                              "config.json/.git_commit/.docker_image y reinicia run_registry.csv, "
