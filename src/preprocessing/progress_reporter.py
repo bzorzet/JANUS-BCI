@@ -5,7 +5,7 @@ contrato — no-op por default para no romper cron ni logs de servidor.
 `RichProgressReporter` es la única implementación real, para debug
 interactivo en terminal.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class ProgressReporter:
@@ -13,7 +13,7 @@ class ProgressReporter:
     reporter (nunca None) — este es el que usa cuando no se pidió uno
     explícito."""
 
-    def on_start(self, total: int) -> None:
+    def on_start(self, total: int, meta: Optional[dict] = None) -> None:
         pass
 
     def on_run_start(self, partition: str) -> None:
@@ -26,25 +26,12 @@ class ProgressReporter:
         pass
 
 
-# (color, ícono) por estado. "pendiente" queda definido acá aunque hoy no
-# se alcanza: el orquestador solo sabe que un run existe en el momento en
-# que lo carga, así que una fila nace directamente en "corriendo" — no hay
-# forma de anunciarla antes sin cargar el subject dos veces.
-_STATUS_STYLE = {
-    "pendiente": ("dim", "…"),
-    "corriendo": ("yellow", "⏳"),
-    "success": ("green", "✓"),
-    "failed": ("red", "✗"),
-    "omitido": ("cyan", "⏭"),
-}
-
-
 class RichProgressReporter(ProgressReporter):
-    """Tabla en vivo (una fila por subject×context×run) + barra de
-    progreso global, vía rich.live.Live. La barra crece de forma dinámica
-    con cada on_run_start (nueva fila conocida) y avanza con cada
-    on_run_result (fila resuelta) — llega a 100% en on_finish sin
-    necesidad de conocer el total de runs de antemano."""
+    """Panel de metadata fijo (impreso una vez, fuera del Live) + barra de
+    progreso global (una unidad de avance por partition resuelta, vía
+    on_run_result). Los failures se imprimen fuera del Live apenas ocurren
+    -- quedan arriba de la barra en vez de perderse en una fila que la
+    barra termina tapando."""
 
     def __init__(self, console: Optional[Any] = None) -> None:
         from rich.console import Console
@@ -53,84 +40,79 @@ class RichProgressReporter(ProgressReporter):
         self._live = None
         self._progress = None
         self._task_id = None
-        self._rows: Dict[str, Dict[str, str]] = {}
-        self._runs_known = 0
-        self._last_refresh = 0.0
+        self._failed: List[str] = []
+        self._start_time = 0.0
 
-    def _build_table(self):
-        from rich.table import Table
-
-        table = Table(expand=True)
-        table.add_column("Subject")
-        table.add_column("Context")
-        table.add_column("Run")
-        table.add_column("Estado")
-        for partition, row in self._rows.items():
-            color, icon = _STATUS_STYLE.get(row["status"], ("white", "?"))
-            table.add_row(
-                row["subject"], row["context"], row["run_id"],
-                f"[{color}]{icon} {row['status']}[/{color}]",
-            )
-        return table
-
-    def _refresh(self, force: bool = False) -> None:
+    def on_start(self, total: int, meta: Optional[dict] = None) -> None:
         import time
 
-        from rich.console import Group
-
-        # Reconstruir la tabla es O(filas conocidas) — en un resume grande
-        # (miles de "omitido" seguidos, sin trabajo real entre medio) llamar
-        # esto en cada evento sería O(n²). Se throttlea por tiempo (no por
-        # cantidad de eventos) para no demorar el feedback de un run real,
-        # que sí tarda; el estado interno (self._rows) igual queda al día
-        # en cada evento, solo se pospone el redibujado.
-        now = time.monotonic()
-        if not force and (now - self._last_refresh) < 0.25:
-            return
-        self._last_refresh = now
-        if self._live is not None:
-            self._live.update(Group(self._progress, self._build_table()))
-
-    @staticmethod
-    def _parse_partition(partition: str):
-        parts = partition.split("/")
-        while len(parts) < 3:
-            parts.append("unknown")
-        return parts[0], parts[1], parts[2]
-
-    def on_start(self, total: int) -> None:
         from rich.live import Live
-        from rich.progress import Progress
+        from rich.panel import Panel
+        from rich.progress import (
+            BarColumn,
+            MofNCompleteColumn,
+            Progress,
+            TextColumn,
+            TimeElapsedColumn,
+            TimeRemainingColumn,
+        )
+
+        meta = meta or {}
+        self._start_time = time.monotonic()
+
+        # Panel de metadata: se imprime UNA vez, antes de arrancar el Live,
+        # y queda fijo arriba -- no forma parte de la región que Live
+        # redibuja.
+        lines = [
+            f"Dataset: {meta.get('dataset_name', '?')}",
+            f"Preprocessing: {meta.get('preprocessing_name', '?')}",
+            f"Subjects: {meta.get('n_subjects', '?')}  ·  Sessions: {meta.get('n_sessions', '?')}"
+            f"  ·  Runs pendientes: {total}",
+            f"Modo: {meta.get('mode', '?')}",
+        ]
+        self.console.print(Panel("\n".join(lines), title="Barrido de preprocesamiento"))
 
         self._progress = Progress(
-            *Progress.get_default_columns(),
-            "•",
-            f"{total} combinaciones subject×session",
+            TextColumn("Preprocessing"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            MofNCompleteColumn(),
+            "subjects",
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=self.console,
         )
-        self._task_id = self._progress.add_task("Preprocesando", total=0)
+        self._task_id = self._progress.add_task("preprocessing", total=total)
         self._live = Live(self._progress, console=self.console, refresh_per_second=4)
         self._live.start()
 
     def on_run_start(self, partition: str) -> None:
-        subject, context, run_id = self._parse_partition(partition)
-        self._rows[partition] = {
-            "subject": subject, "context": context, "run_id": run_id,
-            "status": "corriendo",
-        }
-        self._runs_known += 1
-        self._progress.update(self._task_id, total=self._runs_known)
-        self._refresh()
+        pass
 
     def on_run_result(self, partition: str, status: str) -> None:
-        if partition in self._rows:
-            self._rows[partition]["status"] = status
+        if status == "failed":
+            self._failed.append(partition)
+            # Imprimir sobre el mismo console que usa el Live: rich lo
+            # inserta arriba de la región en vivo y no desaparece cuando
+            # la barra avanza (mismo patrón que tqdm.write).
+            self.console.print(f"[red]✗ {partition} — ver log para detalle[/red]")
         self._progress.advance(self._task_id)
-        self._refresh()
 
     def on_finish(self, summary: dict) -> None:
+        import datetime
+        import time
+
         from rich.panel import Panel
 
         if self._live is not None:
             self._live.stop()
-        lines = [f"{key}: {value}" for key, value in summary.items()]
+
+        elapsed = datetime.timedelta(seconds=round(time.monotonic() - self._start_time))
+        lines = [
+            f"Success: {summary.get('success', 0)}  ·  Failed: {summary.get('failed', 0)}",
+            f"Tiempo total: {elapsed}",
+        ]
+        if self._failed:
+            lines.append("Partitions fallidas:")
+            lines.extend(f"  - {p}" for p in self._failed)
         self.console.print(Panel("\n".join(lines), title="Resumen del barrido"))

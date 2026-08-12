@@ -2,10 +2,10 @@
     "preprocessing_name": "10ICA-CAR-125Hz-preproc",
     "script_type": "preprocessing",
     "database": {
-        "class_name": "Cho2017",
+        "class_name": "Lee2019",
         "module_name": "src.eeg_datasets",
         "kwargs": {
-            "sessions": ["session_1"],
+            "sessions": ["session_1","session_2"],
             "subjects": null,
             "data_to_load": ["motor_imagery"]
         }

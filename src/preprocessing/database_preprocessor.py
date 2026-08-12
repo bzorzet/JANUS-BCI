@@ -11,7 +11,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import mne
 import numpy as np
@@ -173,47 +173,71 @@ class EEGDatabasePreprocessor:
 
         subjects_list = self.dataset.get_subjects_list()
         sessions = getattr(self.dataset, "sessions", ["session_1"])
+
+        # Único chequeo de particiones ya resueltas, antes de cargar
+        # ningún subject: se predice la lista completa sin I/O
+        # (_build_partition_list) y se descarta lo ya hecho
+        # (_filter_pending) para saber, de antemano, qué (subject,
+        # session) hace falta cargar de verdad.
         self._done_partitions = set() if self.force else self._load_done_partitions()
+        all_partitions = self._build_partition_list()
+        pending = all_partitions if self.force else self._filter_pending(all_partitions)
+
+        if not pending:
+            logger.info(
+                "Todo ya procesado (%d combinaciones subject×session×context "
+                "predichas) -- nada para hacer.", len(all_partitions),
+            )
+            return
+
         if self._done_partitions:
             logger.info(
                 "Retomando barrido: %d combinaciones ya resueltas se van a omitir "
                 "(--force para ignorar el registro y reprocesar todo).",
                 len(self._done_partitions),
             )
-        logger.info("Starting preprocessing for %d subjects...", len(subjects_list))
-        self.reporter.on_start(len(subjects_list) * len(sessions))
 
-        for subject in subjects_list:
-            for session in sessions:
-                try:
-                    subject_obj = self.dataset.get_subject(subject, session=session)
-                except Exception as e:
-                    logger.error("CRITICAL ERROR loading subject %s: %s", subject, e)
-                    partition = f"subject_{subject:02d}/unknown/unknown"
-                    self.reporter.on_run_start(partition)
-                    self._append_run_registry(
-                        partition=partition,
-                        subject=subject,
-                        session=session,
-                        context=None,
-                        run_id=None,
-                        status="failed",
-                        ts_start=_now(),
-                        ts_end=_now(),
-                        output_path=None,
-                    )
-                    self.reporter.on_run_result(partition, "failed")
+        pending_subject_sessions = sorted(set((subject, session) for subject, session, _ in pending))
+        logger.info(
+            "Starting preprocessing: %d subject×session a cargar (de %d totales).",
+            len(pending_subject_sessions), len(subjects_list) * len(sessions),
+        )
+        self.reporter.on_start(len(pending), meta={
+            "dataset_name": getattr(self.dataset, "code", type(self.dataset).__name__),
+            "preprocessing_name": self.preprocessing_name,
+            "n_subjects": len(subjects_list),
+            "n_sessions": len(sessions),
+            "mode": "docker" if self.docker_image else "local",
+        })
+
+        for subject, session in pending_subject_sessions:
+            try:
+                subject_obj = self.dataset.get_subject(subject, session=session)
+            except Exception as e:
+                logger.error("CRITICAL ERROR loading subject %s: %s", subject, e)
+                partition = f"subject_{subject:02d}/unknown/unknown"
+                self.reporter.on_run_start(partition)
+                self._append_run_registry(
+                    partition=partition,
+                    subject=subject,
+                    session=session,
+                    context=None,
+                    run_id=None,
+                    status="failed",
+                    ts_start=_now(),
+                    ts_end=_now(),
+                    output_path=None,
+                )
+                self.reporter.on_run_result(partition, "failed")
+                continue
+            if subject_obj is None:
+                continue
+            for context, run_id, raw_data in subject_obj.iter_all_runs():
+                partition = f"subject_{subject:02d}/{context}/{run_id}"
+                if partition in self._done_partitions:
+                    logger.info("Omitiendo %s (ya resuelto en run_registry.csv)", partition)
                     continue
-                if subject_obj is None:
-                    continue
-                for context, run_id, raw_data in subject_obj.iter_all_runs():
-                    partition = f"subject_{subject:02d}/{context}/{run_id}"
-                    if partition in self._done_partitions:
-                        logger.info("Omitiendo %s (ya resuelto en run_registry.csv)", partition)
-                        self.reporter.on_run_start(partition)
-                        self.reporter.on_run_result(partition, "omitido")
-                        continue
-                    self._process_one_run(subject, session, context, run_id, raw_data)
+                self._process_one_run(subject, session, context, run_id, raw_data)
 
         logger.info("--- Preprocessing Finished ---")
         self.reporter.on_finish(self._build_summary())
@@ -286,6 +310,42 @@ class EEGDatabasePreprocessor:
                     logger.warning(
                         "saver de artifact '%s' del stage '%s' falló: %s", key, stage_name, e,
                     )
+
+    def _build_partition_list(self) -> List[Tuple[int, str, str]]:
+        """Predicted (subject, session, partition) triples from
+        subject_list x sessions x data_to_load -- no I/O, no
+        get_subject() calls, instant even for a sweep of thousands of
+        subjects. This is an approximation: it assumes one run_id
+        ("run_1") per data_to_load entry, which matches Cho2017's
+        motor_imagery/movement and Lee2019's motor_imagery, but not
+        Cho2017's 'rest' (real key: 'recording') or 'noise' (5 real
+        sub-keys) contexts, nor Dreyer2023's runs (existence depends on
+        which .gdf files are actually on disk per subject, only knowable
+        inside get_subject()). This never causes a real pending run to be
+        silently skipped -- the per-run check against run_registry.csv
+        inside the main loop (self._done_partitions) stays authoritative
+        and catches anything this prediction gets wrong. It only means
+        the subject-level pre-filter below is a weaker optimization for
+        those datasets: get_subject() may still run for a subject that's
+        actually fully done, because none of its real partitions happen
+        to match a predicted one."""
+        subjects_list = self.dataset.get_subjects_list()
+        sessions = getattr(self.dataset, "sessions", ["session_1"])
+        contexts = getattr(self.dataset, "data_to_load", None) or self.dataset.get_data_available()
+        return [
+            (subject, session, f"subject_{subject:02d}/{context}/run_1")
+            for subject in subjects_list
+            for session in sessions
+            for context in contexts
+        ]
+
+    def _filter_pending(self, partitions: List[Tuple[int, str, str]]) -> List[Tuple[int, str, str]]:
+        """Drops predicted partitions already marked 'success' in
+        run_registry.csv with their output still present on disk (same
+        'done' definition as the per-run check, see
+        _load_done_partitions -- self._done_partitions must already be
+        populated before calling this)."""
+        return [(subject, session, p) for subject, session, p in partitions if p not in self._done_partitions]
 
     def _load_done_partitions(self) -> set:
         """Partitions con status == 'success' en run_registry.csv que

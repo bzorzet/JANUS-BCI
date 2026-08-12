@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile src/preprocessing/database_preprocessor.py src/preprocessing/progress_reporter.py)"
+    ]
+  }
+}
