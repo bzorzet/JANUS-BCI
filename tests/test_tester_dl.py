@@ -2,7 +2,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from src.training.tester import Tester_DL
+from src.training.core.tester import Tester_DL
 
 
 class _CountingLinear(torch.nn.Module):

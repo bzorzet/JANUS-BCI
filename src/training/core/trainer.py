@@ -20,8 +20,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 import torch
 
-from src.training.callback_dispatcher import CallbackDispatcher
-from src.training.loss_strategy import LossStrategy
+from src.training.core.callback_dispatcher import CallbackDispatcher
+from src.training.core.loss_strategy import LossStrategy
 
 
 class Trainer_DL:
@@ -73,14 +73,18 @@ class Trainer_DL:
         self.loss_strategy = loss_strategy
 
         self.stop_training = False
-        self.history: Dict[str, Any] = {}
 
         self.dispatcher = CallbackDispatcher(callbacks)
-        self.initialize_history()
+        # self.history y initialize_history() ya NO existen acá -- el
+        # dispatcher los inicializa en su propio __init__.
 
-    def initialize_history(self) -> None:
-        self.history['epoch'] = []
-        self.history['best_epoch'] = None
+    @property
+    def history(self) -> Dict[str, Any]:
+        """Delega a self.dispatcher.history. Los callbacks existentes
+        (callbacks.py) siguen haciendo trainer.history[...] sin saber que
+        el dict real vive en el dispatcher -- ver nota en
+        callback_dispatcher.py."""
+        return self.dispatcher.history
 
     def _compute_loss(self, y_pred, y_true, X):
         if self.loss_strategy is not None:
@@ -136,7 +140,7 @@ class Trainer_DL:
                 )
 
     def get_history(self) -> Dict[str, Any]:
-        return self.history
+        return self.dispatcher.history
 
     def get_model(self):
         return self.model
@@ -170,12 +174,25 @@ class Trainer_ML:
     `infer(X, probability=True)`, `get_history()`. Confirmado contra
     repo_viejo/train_ML_model_within_subject_online_simulated_for_MI-BCI_classification.py
     (`model.fit(X_train, y_train)`, `model.predict`/`model.predict_proba`,
-    pesos persistidos vía `joblib.dump`, no `.pth`)."""
+    pesos persistidos vía `joblib.dump`, no `.pth`).
 
-    def __init__(self, model, X_train, y_train):
+    X_val/y_val opcionales, sin uso todavía dentro de la clase -- se
+    dejan preparados en el constructor para no romper la interfaz cuando
+    se implemente selección de mejor modelo/hiperparámetros vía val
+    (planeado a futuro, coherente con que Trainer_DL también use val con
+    ese propósito, para poder comparar ML y DL bajo el mismo criterio de
+    selección). Hoy, val simplemente no se usa: get_history() sigue
+    devolviendo {} y train() sigue sin tocarlos. Cualquier caller
+    existente que instancie Trainer_ML(model, X_train, y_train) sin val
+    sigue funcionando idéntico -- default None, sin cambio de
+    comportamiento."""
+
+    def __init__(self, model, X_train, y_train, X_val=None, y_val=None):
         self.model = model
         self.X_train = X_train
         self.y_train = y_train
+        self.X_val = X_val
+        self.y_val = y_val
 
     def train(self) -> None:
         self.model.fit(self.X_train, self.y_train)

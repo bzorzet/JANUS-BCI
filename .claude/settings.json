@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -m py_compile src/preprocessing/database_preprocessor.py src/preprocessing/progress_reporter.py)"
+      "Bash(python -m py_compile src/preprocessing/database_preprocessor.py src/preprocessing/progress_reporter.py)",
+      "Bash(python3 -m py_compile src/training/orchestrator.py src/training/splitters.py src/torch_utils/cuda.py src/torch_utils/datasets.py)"
     ]
   }
 }

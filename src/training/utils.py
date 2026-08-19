@@ -85,18 +85,18 @@ def convert_labels_to_int(labels, dict_labels: Optional[dict] = None):
     return np.vectorize(dict_labels.get)(labels)
 
 
-def binarize_y(y):
-    """Convierte un vector y con 2 clases a binario (0 y 1), devolviendo
-    también el mapeo inverso para saber a qué clase original corresponde
-    cada valor. Puerto verbatim (idéntico en el script viejo y en
-    auxiliary_functions.py -- estaba duplicado, acá queda en un solo
-    lugar)."""
-    unique_classes = np.unique(y)
-    assert len(unique_classes) == 2, "y debe tener exactamente dos clases distintas"
+def encode_labels(y, label_map: Optional[dict] = None) -> tuple[np.ndarray, dict]:
+    """Mapea las clases de y a enteros consecutivos 0..N-1, preservando
+    el orden de aparición de np.unique(y) si no se pasa label_map. Sirve
+    para cualquier N >= 2 -- el caso binario (N=2) es un caso particular,
+    no una restricción del contrato.
 
-    class_to_bin = {unique_classes[0]: 0, unique_classes[1]: 1}
-    bin_to_class = {v: k for k, v in class_to_bin.items()}
-
-    y_bin = np.vectorize(class_to_bin.get)(y)
-
-    return y_bin, bin_to_class
+    label_map, si se pasa, fuerza el mapeo (útil para que train/val/test
+    usen EXACTAMENTE el mismo mapeo, en vez de que cada split calcule el
+    suyo con np.unique -- ver la nota de bin_to_class consistente ya
+    marcada como pendiente en el prompt de splitters)."""
+    if label_map is None:
+        unique_classes = np.unique(y)
+        label_map = {cls: i for i, cls in enumerate(unique_classes)}
+    y_encoded = np.vectorize(label_map.get)(y)
+    return y_encoded, label_map

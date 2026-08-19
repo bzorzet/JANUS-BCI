@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from src.training.splitters import WithinSubjectHoldoutSplitter, stratified_sequential_split
+from src.training.splitting.splitters import WithinSubjectHoldoutSplitter, stratified_sequential_split
 
 
 def test_stratified_sequential_split_is_deterministic_and_floor_divides():

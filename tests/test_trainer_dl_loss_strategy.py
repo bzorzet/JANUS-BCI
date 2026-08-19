@@ -2,8 +2,8 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from src.training.loss_strategy import LossStrategy
-from src.training.trainer import Trainer_DL
+from src.training.core.loss_strategy import LossStrategy
+from src.training.core.trainer import Trainer_DL
 
 
 def _loader(n=10, batch_size=5, n_features=4, n_classes=2):

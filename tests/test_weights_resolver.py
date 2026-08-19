@@ -1,8 +1,8 @@
 import pandas as pd
 import pytest
 
-from src.training.weights_matcher import WithinSubjectMatcher
-from src.training.weights_resolver import TrainedModelResolver
+from src.training.weights.weights_matcher import WithinSubjectMatcher
+from src.training.weights.weights_resolver import TrainedModelResolver
 
 
 def _make_training_tree(results_root, strategy="WS-Standard", recipe="CTNet", dataset="Cho2017",

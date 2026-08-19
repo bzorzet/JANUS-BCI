@@ -107,7 +107,7 @@ class PreprocessedDataset(BaseEEGDataset):
 
     def get_subject(self, subject_id: int, session: str = None) -> Subject:
         current_session = session if session else self.sessions[0]
-        sub_folder = os.path.join(self.base_path, current_session, f"subject_{subject_id}")
+        sub_folder = os.path.join(self.base_path, current_session, f"subject_{subject_id:02d}")
 
         # 1. Prepare Metadata for this specific subject
         # Use the logic from _update_metadata for channels
@@ -138,7 +138,7 @@ class PreprocessedDataset(BaseEEGDataset):
 
         # 2. Parse Files
         subject_dict = {'extra_info': extra_info}
-        prefix_to_remove = f"subject_{subject_id}_"
+        prefix_to_remove = f"subject_{subject_id:02d}_"
         files = sorted(os.listdir(sub_folder))
         for file in files:
             if not file.endswith(('.fif', '.npy', '.npz')) or "ica" in file.lower():

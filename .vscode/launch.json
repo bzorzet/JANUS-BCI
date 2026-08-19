@@ -5,11 +5,13 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Depurador de Python: Archivo actual",
+            "name": "Python: Current File (from repo root)",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": { "PYTHONPATH": "${workspaceFolder}" }
         },
         {
             "name": "run_production.py (elegir config)",

@@ -26,10 +26,10 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_a
 
 from src.torch_utils import obtain_cuda_device
 from src.training.orchestrator import _flatten_for_mlflow, make_run_dir
-from src.training.tester import Tester_DL
-from src.training.utils import binarize_y, create_dataloader, create_dataset
-from src.training.weights_matcher import MATCHER_REGISTRY
-from src.training.weights_resolver import TrainedModelResolver
+from src.training.core.tester import Tester_DL
+from src.training.utils import encode_labels, create_dataloader, create_dataset
+from src.training.weights.matcher import MATCHER_REGISTRY
+from src.training.weights.resolver import TrainedModelResolver
 from src.utils.imports import import_class
 from src.utils.paths import PATHS
 from src.utils.reproducibility import log_reproducibility_trio
@@ -167,7 +167,7 @@ def run_testing_sweep(
         partition_status = "success"
         try:
             X, y, metadata = dataset.flatten_subject_data(subject_id, session=database_session)
-            y, bin_to_class = binarize_y(y)
+            y, bin_to_class = encode_labels(y)
 
             X_t = torch.tensor(X, dtype=torch.float).to(device)
             y_t = torch.tensor(y, dtype=torch.long).to(device)

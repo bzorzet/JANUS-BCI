@@ -1,0 +1,7 @@
+Único punto a vigilar, no un bug: torch.manual_seed(general_config["seed"]) 
+aparece de nuevo en el orquestador, línea 233, dentro del loop de sujeto pero 
+antes del loop de réplica — mezclando el seed general con la llamada directa a 
+torch.manual_seed en vez de pasar por set_seed(). Esto no rompe nada hoy 
+(mismo efecto), pero es una inconsistencia de estilo: dos formas distintas 
+de setear la misma cosa en el mismo archivo. Lo anoto para cuando auditemos 
+orchestrator.py de nuevo en la Capa 5.

@@ -8,6 +8,15 @@ Diferencia clave respecto al original: los callbacks "default"
 es responsabilidad del orquestador (`src/training/orchestrator.py`) armar la
 lista completa (incluyendo los que antes eran default) y pasarla ya
 resuelta.
+
+`history` migró acá desde `Trainer_DL` (antes vivía como atributo directo
+del Trainer): es estado que los CALLBACKS llenan (LossTracker, EpochScoring,
+etc.), no algo que el Trainer calcule -- alojar ese estado compartido es
+más responsabilidad del dispatcher de eventos que del ejecutor del loop de
+entrenamiento (ver discusión de SRP). `Trainer_DL.history` sigue existiendo
+como property que delega acá, así que `callbacks.py` NO se modifica --
+cada callback sigue haciendo `trainer.history[...]` exactamente igual que
+antes, sin saber que el dict ahora vive en el dispatcher.
 """
 from typing import Any, Dict, List, Optional
 
@@ -25,12 +34,19 @@ class CallbackDispatcher:
                 if hasattr(cb, event):
                     self.callbacks[event].append(cb)
 
+        # Migrado desde Trainer_DL.initialize_history() -- mismo contenido
+        # inicial, ahora alojado acá.
+        self.history: Dict[str, Any] = {}
+        self.history['epoch'] = []
+        self.history['best_epoch'] = None
+
     def notify(self, event: str, trainer, **kwargs) -> None:
         """`trainer` se pasa posicional -- igual que el `notify` original,
         que llamaba `getattr(cb, method_name)(self, **cb_kwargs)`. Los
         callbacks existentes (callbacks.py) leen/escriben
         `trainer.history`/`trainer.model`/`trainer.stop_training`
         directamente, así que necesitan esta referencia sin cambios de
-        firma."""
+        firma. `trainer.history` es ahora una property que delega a
+        `self.history` (este dict) -- transparente para los callbacks."""
         for cb in self.callbacks[event]:
             getattr(cb, event)(trainer, **kwargs)
