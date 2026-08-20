@@ -1,4 +1,4 @@
-from src.training.core.callback_dispatcher import CallbackDispatcher
+from src.training.core.callbacks.callback_dispatcher import CallbackDispatcher
 
 
 class _FullCallback:

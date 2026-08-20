@@ -25,7 +25,7 @@ Qué verifica:
 """
 import numpy as np
 
-from src.torch_utils.datasets import MultiFrequencyBandMaskingDataset
+from src.eeg_datasets.torch_datasets import MultiFrequencyBandMaskingDataset
 
 
 def _power_per_trial_channel(X):

@@ -40,7 +40,10 @@ from src.training.splitting.index_split_strategy import IndexSplitStrategy, Stra
 
 class WithinUnitHoldoutSchema:
     def __init__(
-        self, provider: DataProvider, ptrain: float, pval: float, ptest: float,
+        self, provider: DataProvider, 
+        ptrain: float, pval: float, ptest: float,
+        units_to_test: Optional[List[Any]] = None,
+        dataloader_seed: int = 8,
         split_strategy: Optional[IndexSplitStrategy] = None,
         label_transform: Optional[LabelTransform] = None,
     ):
@@ -48,10 +51,27 @@ class WithinUnitHoldoutSchema:
         self.ptrain = ptrain
         self.pval = pval
         self.ptest = ptest
+        self.units_to_test = units_to_test
+        self.dataloader_seed = dataloader_seed
         # Default explícito de ESTE Schema, no el default conceptual del
         # módulo -- ver docstring de index_split_strategy.py.
         self.split_strategy = split_strategy or StratifiedSequentialSplit()
         self.label_transform = label_transform or ClassificationLabelTransform()
+
+    def units_to_process(self) -> List[Any]:
+        """Reemplaza _resolve_units() del orquestador -- el Schema decide
+        qué unidades recorrer, con SU propio vocabulario (units_to_test),
+        validado contra el provider."""
+        all_units = self.provider.list_units()
+        if self.units_to_test is None:
+            return all_units
+        invalid = [u for u in self.units_to_test if u not in all_units]
+        if invalid:
+            raise ValueError(
+                f"units_to_test pide unidades que el provider no tiene: {invalid}. "
+                f"Unidades disponibles: {all_units}"
+            )
+        return self.units_to_test
 
     def generate_folds(self, **context) -> List[Fold]:
         unit_id = context["unit_id"]
@@ -82,6 +102,7 @@ class WithinUnitHoldoutSchema:
             X_test=X_test, y_test=y_test_t,
             metadata={
                 "unit_id": unit_id,
+                "dataloader_seed": self.dataloader_seed,
                 "train_idx": [int(i) for i in train_idx],
                 "val_idx": [int(i) for i in val_idx],
                 "test_idx": [int(i) for i in test_idx],
@@ -105,14 +126,31 @@ class WithinUnitKFoldSchema:
 
     def __init__(
         self, provider: DataProvider, k_folds: int, ptest: float, seed: int,
+        units_to_test: Optional[List[Any]] = None,
         label_transform: Optional[LabelTransform] = None,
     ):
         self.provider = provider
         self.k_folds = k_folds
         self.ptest = ptest
         self.seed = seed
+        self.units_to_test = units_to_test
         self.label_transform = label_transform or ClassificationLabelTransform()
 
+    def units_to_process(self) -> List[Any]:
+        """Reemplaza _resolve_units() del orquestador -- el Schema decide
+        qué unidades recorrer, con SU propio vocabulario (units_to_test),
+        validado contra el provider."""
+        all_units = self.provider.list_units()
+        if self.units_to_test is None:
+            return all_units
+        invalid = [u for u in self.units_to_test if u not in all_units]
+        if invalid:
+            raise ValueError(
+                f"units_to_test pide unidades que el provider no tiene: {invalid}. "
+                f"Unidades disponibles: {all_units}"
+            )
+        return self.units_to_test
+    
     def generate_folds(self, **context) -> List[Fold]:
         """context esperado: unit_id."""
         unit_id = context["unit_id"]
@@ -146,6 +184,7 @@ class WithinUnitKFoldSchema:
                 X_test=X_test, y_test=y_test_t,
                 metadata={
                     "unit_id": unit_id, "fold_idx": fold_idx, "k_folds": self.k_folds,
+                    "dataloader_seed": self.seed * 1000 + fold_idx,
                     "train_idx": [int(i) for i in train_idx],
                     "val_idx": [int(i) for i in val_idx],
                     "test_idx": [int(i) for i in test_idx],
@@ -156,10 +195,11 @@ class WithinUnitKFoldSchema:
         return folds
 
     def partition_name(self, fold: Fold) -> str:
-        # Nota: con K folds, varios Fold devueltos por la misma llamada
-        # comparten partition_name -- sub-organización por fold_idx queda
-        # a cargo del orquestador/guardado (fuera de alcance acá).
-        return f"unit_{fold.metadata['unit_id']:02d}"
+        """A diferencia de Holdout/LOSO (un Fold por llamada), acá varios
+        Fold de la misma unidad comparten unit_id pero difieren en fold_idx
+        -- el nombre de partición debe incluirlo para no pisar carpetas entre
+        folds distintos de la misma unidad."""
+        return f"unit_{fold.metadata['unit_id']:02d}_fold_{fold.metadata['fold_idx']}"
 
 
 class LeaveOneUnitOutSchema:
@@ -170,22 +210,42 @@ class LeaveOneUnitOutSchema:
     ningún dataset -- todo pasa por self.provider."""
 
     def __init__(
-        self, provider: DataProvider, pval_subjects: float, seed: int,
+        self, provider: DataProvider, pval_units: float, seed: int,
         label_transform: Optional[LabelTransform] = None,
+        units_to_test: List[int] = None, dataloader_seed: int = 8,
     ):
         self.provider = provider
-        self.pval_subjects = pval_subjects
+        self.pval_units = pval_units
         self.seed = seed
         self.label_transform = label_transform or ClassificationLabelTransform()
-
+        self.units_to_test = units_to_test
+        self.dataloader_seed = dataloader_seed
+        
+    def units_to_process(self) -> List[Any]:
+        """Reemplaza _resolve_units() del orquestador -- el Schema decide
+        qué unidades recorrer, con SU propio vocabulario (units_to_test),
+        validado contra el provider."""
+        all_units = self.provider.list_units()
+        if self.units_to_test is None:
+            return all_units
+        invalid = [u for u in self.units_to_test if u not in all_units]
+        if invalid:
+            raise ValueError(
+                f"units_to_test pide unidades que el provider no tiene: {invalid}. "
+                f"Unidades disponibles: {all_units}"
+            )
+        return self.units_to_test
+    
     def generate_folds(self, **context) -> List[Fold]:
-        """context esperado: test_unit (UN identificador, no una lista --
-        misma cardinalidad que los otros 2 Schemas)."""
-        test_unit = context["test_unit"]
-        remaining = [u for u in self.provider.list_units() if u != test_unit]
+        """context esperado: unit_id (mismo nombre que los otros 2 Schemas,
+        unificado para que el orquestador sea agnóstico -- semánticamente acá
+        representa la unidad que se deja afuera como test, pero se pasa con
+        la misma keyword que Holdout/KFold)."""
+        unit_id = context["unit_id"]  # antes: context["test_unit"]
+        remaining = [u for u in self.provider.list_units() if u != unit_id]
 
         rng = np.random.RandomState(self.seed)
-        n_val = round(self.pval_subjects * len(remaining))
+        n_val = round(self.pval_units * len(remaining))
         # REGLA CRÍTICA, no negociable: ningún unit simultáneamente en
         # train_units y val_units -- la exclusión de abajo lo garantiza.
         if n_val > 0:
@@ -199,7 +259,7 @@ class LeaveOneUnitOutSchema:
             X_val, y_val, meta_val = self.provider.get_units(val_units)
         else:
             X_val, y_val, meta_val = None, None, None
-        X_test, y_test, meta_test = self.provider.get_unit(test_unit)
+        X_test, y_test, meta_test = self.provider.get_unit(unit_id)
 
         y_train_t, y_val_t, y_test_t, label_meta = self.label_transform.transform(y_train, y_val, y_test)
 
@@ -208,9 +268,10 @@ class LeaveOneUnitOutSchema:
             X_val=X_val, y_val=y_val_t,
             X_test=X_test, y_test=y_test_t,
             metadata={
-                "test_unit": test_unit,
+                "test_unit": unit_id,
                 "train_units": train_units,
                 "val_units": val_units,
+                "dataloader_seed": self.dataloader_seed,
                 **label_meta,
                 "metadata_train": meta_train, "metadata_val": meta_val, "metadata_test": meta_test,
             },

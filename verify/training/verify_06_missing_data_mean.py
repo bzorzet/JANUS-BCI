@@ -37,7 +37,7 @@ NO acepta numpy crudo cuando hay canales faltantes que expandir.
 import numpy as np
 import torch
 
-from src.torch_utils.datasets import MIBCI_SimpleDataset_MissingData
+from src.eeg_datasets.torch_datasets import MIBCI_SimpleDataset_MissingData
 
 
 def verify_mean_is_constant_per_trial():

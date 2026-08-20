@@ -27,10 +27,10 @@ import torch
 import torch.nn as nn
 
 from src.training.core.trainer import Trainer_DL
-from src.training.core.callback_dispatcher import CallbackDispatcher
+from src.training.core.callbacks.callback_dispatcher import CallbackDispatcher
 
 # Callback real, sin modificar -- ajustar el import si el path difiere.
-from src.torch_utils.callbacks import LossTracker
+from src.training.core.callbacks import LossTracker
 
 
 class DummyModel(nn.Module):
