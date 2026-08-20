@@ -14,14 +14,6 @@ from sklearn.metrics import accuracy_score
 from src.utils.imports import import_class
 
 
-def accuracy(y_pred, y_true) -> float:
-    """Score function esperado por EpochScoring: score_fn(y_pred, y_true).
-    Si y_pred viene en 2D (logits/probabilidades), argmax primero."""
-    if len(y_pred.shape) == 2:
-        y_pred = np.argmax(y_pred, axis=1)
-    return accuracy_score(y_true, y_pred)
-
-
 def create_dataset(split_name: str, X, y, ds_config: dict):
     """Instancia un torch Dataset vía import_class. `ds_config` puede tener
     una entrada por split (train/val/test) o ser compartido -- si
@@ -66,18 +58,34 @@ def build_callbacks(
     `aditional_params["path_to_save"]` en el único caller real. Acá, sin
     ese acoplamiento al scope del script, la condición usa directamente
     `aditional_params` -- mismo comportamiento observable, sin la
-    dependencia de una global inexistente en este módulo."""
+    dependencia de una global inexistente en este módulo.prefix se inyecta con el MISMO criterio que dirname: cualquier
+    callback cuyos params declaren 'dirname' es, por definición, uno que
+    escribe a disco -- ese es el que necesita distinguir archivos entre
+    seeds (guardado aplanado, Paso 4b). No se inyecta en callbacks que no
+    declaran dirname (EarlyStopping, LoggerCallback, etc.), porque esos
+    no escriben archivos y su __init__ no acepta ese parámetro."""
+    
     base_callbacks = base_callbacks or []
     final_callbacks = list(base_callbacks)
     if config_callbacks:
         for cb in config_callbacks:
             cb_params = cb.get('params', {}).copy()
-            if 'dirname' in cb_params and aditional_params is not None and aditional_params.get("path_to_save") is not None:
+            
+            if "scheduler" in cb_params:
+                scheduler_cfg = cb_params["scheduler"]
+                scheduler_class = import_class(scheduler_cfg["class_name"], scheduler_cfg["module_name"])
+                optimizer = aditional_params["optimizer"]  # ver punto 3, nuevo requisito
+                cb_params["scheduler"] = scheduler_class(optimizer, **scheduler_cfg.get("params", {}))
+
+
+            writes_to_disk = 'dirname' in cb_params
+            if writes_to_disk and aditional_params is not None and aditional_params.get("path_to_save") is not None:
                 cb_params['dirname'] = aditional_params["path_to_save"]
+            if writes_to_disk and aditional_params is not None and aditional_params.get("prefix") is not None:
+                cb_params['prefix'] = aditional_params["prefix"]
             cb_instance = import_class(cb['class_name'], cb['module_name'])(**cb_params)
             final_callbacks.append(cb_instance)
     return final_callbacks
-
 
 def convert_labels_to_int(labels, dict_labels: Optional[dict] = None):
     """Puerto verbatim de repo_viejo/src/utils/auxiliary_functions.py."""
